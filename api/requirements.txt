@@ -1,1 +1,6 @@
-weaviate-client
+fastapi==0.104.1
+uvicorn==0.24.0
+python-dotenv==1.0.0
+weaviate-client==3.24.1
+httpx==0.25.1
+mistralai==0.0.8

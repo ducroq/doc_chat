@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import uuid
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import weaviate
@@ -13,6 +14,36 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+def chunk_text(text, max_chunk_size=1000, overlap=200):
+    """
+    Split text into overlapping chunks of approximately max_chunk_size characters.
+    """
+    # Simple paragraph-based chunking
+    paragraphs = text.split('\n\n')
+    chunks = []
+    current_chunk = ""
+    
+    for paragraph in paragraphs:
+        # If adding this paragraph would exceed max_chunk_size,
+        # save the current chunk and start a new one with overlap
+        if len(current_chunk) + len(paragraph) > max_chunk_size and current_chunk:
+            chunks.append(current_chunk)
+            
+            # Find a good overlap point - ideally at a paragraph boundary
+            overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+            current_chunk = overlap_text + "\n\n" + paragraph
+        else:
+            if current_chunk:
+                current_chunk += "\n\n" + paragraph
+            else:
+                current_chunk = paragraph
+    
+    # Add the last chunk if it's not empty
+    if current_chunk:
+        chunks.append(current_chunk)
+    
+    return chunks
 
 class TextFileHandler(FileSystemEventHandler):
     def __init__(self, weaviate_client):
@@ -31,19 +62,67 @@ class TextFileHandler(FileSystemEventHandler):
         self.process_file(event.src_path)
         
     def process_file(self, file_path):
-        # Placeholder for the actual file processing
+        """Process a text file and store chunks in Weaviate."""
         logger.info(f"Processing file: {file_path}")
         
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
                 content = file.read()
                 logger.info(f"File content length: {len(content)} characters")
-                # In a real implementation, you would:
-                # 1. Split the content into chunks
-                # 2. Store chunks in Weaviate
-                logger.info(f"File {file_path} processed successfully")
+                
+                # Get the filename without the path
+                filename = os.path.basename(file_path)
+                
+                # Delete existing chunks for this file if any
+                self.delete_existing_chunks(filename)
+                
+                # Split the content into chunks
+                chunks = chunk_text(content)
+                logger.info(f"Split into {len(chunks)} chunks")
+                
+                # Store each chunk in Weaviate
+                for i, chunk_content in enumerate(chunks):
+                    self.store_chunk(chunk_content, filename, i)
+                    
+                logger.info(f"File {filename} processed successfully")
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}")
+
+    def delete_existing_chunks(self, filename):
+        """Delete existing chunks for a file."""
+        try:
+            self.weaviate_client.batch.delete_objects(
+                class_name="DocumentChunk",
+                where={
+                    "path": ["filename"],
+                    "operator": "Equal",
+                    "valueString": filename
+                }
+            )
+            logger.info(f"Deleted existing chunks for {filename}")
+        except Exception as e:
+            logger.error(f"Error deleting existing chunks: {str(e)}")
+
+    def store_chunk(self, content, filename, chunk_id):
+        """Store a chunk in Weaviate."""
+        try:
+            properties = {
+                "content": content,
+                "filename": filename,
+                "chunkId": chunk_id
+            }
+            
+            # Create a UUID based on filename and chunk_id for consistency
+            obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{filename}_{chunk_id}"))
+            
+            self.weaviate_client.data_object.create(
+                class_name="DocumentChunk",
+                data_object=properties,
+                uuid=obj_uuid
+            )
+            logger.info(f"Stored chunk {chunk_id} from {filename}")
+        except Exception as e:
+            logger.error(f"Error storing chunk: {str(e)}")
 
 def setup_weaviate_schema(client):
     """Set up the Weaviate schema for document chunks."""
@@ -111,8 +190,10 @@ def main():
     
     try:
         logger.info(f"Connecting to Weaviate at {weaviate_url}")
-        client = weaviate.Client(weaviate_url)
-        
+        client = weaviate.Client(
+            weaviate_url,
+            startup_period=60  # Increase this to 60 seconds, since Windows typically has slightly slower file operations through Docker:
+        )        
         # Check connection
         if client.is_ready():
             logger.info("Successfully connected to Weaviate")

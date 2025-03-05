@@ -2,7 +2,8 @@ services:
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
     ports:
-      - "8080:8080"
+      - 8080:8080
+      # - 50051:50051
     command:
       - --host
       - 0.0.0.0
@@ -17,15 +18,19 @@ services:
       DEFAULT_VECTORIZER_MODULE: 'text2vec-transformers'
       ENABLE_MODULES: 'text2vec-transformers'
       TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers:8080'
+      CLUSTER_HOSTNAME: 'node1'
+      # CLUSTER_GOSSIP_BIND_PORT: '7946'
+      # CLUSTER_DATA_BIND_PORT: '7100'
+      # CLUSTER_ENABLED: 'false'      
     volumes:
       - weaviate_data:/var/lib/weaviate
-    restart: on-failure:0
+    restart: on-failure
 
   t2v-transformers:
     image: semitechnologies/transformers-inference:sentence-transformers-all-MiniLM-L6-v2
     environment:
       ENABLE_CUDA: '0'
-    restart: on-failure:0
+    restart: on-failure
 
   processor:
     build: ./processor
@@ -37,7 +42,27 @@ services:
     depends_on:
       - weaviate
       - t2v-transformers
-    restart: on-failure:0
+    restart: on-failure
+
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    environment:
+      - WEAVIATE_URL=http://weaviate:8080
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+    depends_on:
+      - weaviate
+      - t2v-transformers
+
+  web-prototype:
+    build: ./web-prototype
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      - api    
 
 volumes:
   weaviate_data:
