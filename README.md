@@ -361,15 +361,15 @@ The file also specifies how these containers connect to each other, what ports t
 
 ### Running the system
 
-Start the system with:
+On Windows, start the system by runnning the Power Shell script:
 
 ```bash
-docker-compose up --build
+.\start.ps1
 ```
 which builds and starts all three containers together. 
 
 Access:
-- Web interface: http://localhost:80
+- Web interface: http://localhost:8501
 - API documentation: http://localhost:8000/docs
 - Weaviate console: http://localhost:8080
 
