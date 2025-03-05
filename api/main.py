@@ -5,6 +5,8 @@ from pydantic import BaseModel
 import weaviate
 import httpx
 from dotenv import load_dotenv
+from mistralai.client import MistralClient
+from mistralai.models.chat_completion import ChatMessage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -19,6 +21,15 @@ app = FastAPI(title="EU-Compliant RAG API")
 # Initialize Weaviate client
 weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
+
+# Initialize Mistral client
+mistral_client = None
+if mistral_api_key:
+    try:
+        mistral_client = MistralClient(api_key=mistral_api_key)
+        logger.info("Mistral client initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
 # Create Weaviate client
 try:
@@ -43,7 +54,7 @@ async def status():
     return {
         "api": "running",
         "weaviate": weaviate_status,
-        "mistral_api": "configured" if mistral_api_key else "not configured"
+        "mistral_api": "configured" if mistral_client else "not configured"
     }
 
 @app.post("/search")
@@ -81,8 +92,8 @@ async def chat(query: Query):
     if not client:
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
     
-    if not mistral_api_key:
-        raise HTTPException(status_code=503, detail="Mistral API key not configured")
+    if not mistral_client:
+        raise HTTPException(status_code=503, detail="Mistral API client not configured")
     
     try:
         # Search Weaviate for relevant chunks
@@ -107,44 +118,24 @@ async def chat(query: Query):
         sources = [{"filename": chunk["filename"], "chunkId": chunk["chunkId"]} 
                    for chunk in chunks]
         
-        # Send prompt to Mistral AI
-        async with httpx.AsyncClient() as http_client:
-            mistral_response = await http_client.post(
-                "https://api.mistral.ai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {mistral_api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": "mistral-tiny",
-                    "messages": [
-                        {
-                            "role": "system", 
-                            "content": "You are a helpful assistant that answers questions based on the provided document context. "
-                                      "Stick to the information in the context. If you don't know the answer, say so."
-                        },
-                        {
-                            "role": "user", 
-                            "content": f"Context:\n{context}\n\nQuestion: {query.question}"
-                        }
-                    ],
-                    "temperature": 0.7
-                },
-                timeout=30.0
-            )
+        # Use Mistral client to generate response
+        messages = [
+            ChatMessage(role="system", content="You are a helpful assistant that answers questions based on the provided document context. Stick to the information in the context. If you don't know the answer, say so."),
+            ChatMessage(role="user", content=f"Context:\n{context}\n\nQuestion: {query.question}")
+        ]
+        
+        chat_response = mistral_client.chat(
+            model="mistral-tiny",
+            messages=messages,
+            temperature=0.7,
+        )
+        
+        answer = chat_response.choices[0].message.content
             
-            if mistral_response.status_code != 200:
-                logger.error(f"Mistral API error: {mistral_response.text}")
-                raise HTTPException(status_code=mistral_response.status_code, 
-                                    detail="Error communicating with LLM service")
-            
-            response_data = mistral_response.json()
-            answer = response_data["choices"][0]["message"]["content"]
-            
-            return {
-                "answer": answer,
-                "sources": sources
-            }
+        return {
+            "answer": answer,
+            "sources": sources
+        }
             
     except Exception as e:
         logger.error(f"Error in chat: {str(e)}")
