@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 650">
+  <!-- Background -->
+  <rect width="800" height="600" fill="#f8f9fa" rx="0" ry="0"/>
+  
+  <!-- Host Machine Container -->
+  <rect x="50" y="80" width="700" height="480" fill="#e9ecef" rx="10" ry="10" stroke="#6c757d" stroke-width="2" stroke-dasharray="5,5"/>
+  <text x="120" y="100" font-family="Arial" font-size="16" font-weight="bold">Host Machine</text>
+  
+  <!-- Watched Folder -->
+  <rect x="100" y="130" width="180" height="100" fill="#ffd166" rx="5" ry="5" stroke="#e09f3e" stroke-width="2"/>
+  <text x="190" y="170" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle">Watched Folder</text>
+  <text x="190" y="190" font-family="Arial" font-size="12" text-anchor="middle">/data</text>
+  <text x="190" y="210" font-family="Arial" font-size="12" text-anchor="middle">Text Files (.txt)</text>
+  
+  <!-- Document Processor Service -->
+  <rect x="400" y="130" width="200" height="100" fill="#118ab2" rx="5" ry="5"/>
+  <text x="500" y="170" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Document Processor</text>
+  <text x="500" y="190" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Watches folder with Watchdog</text>
+  <text x="500" y="210" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Chunks text + indexes</text>
+
+  <!-- Docker Environment Container -->
+  <rect x="70" y="250" width="660" height="290" fill="#dee2e6" rx="10" ry="10" stroke="#6c757d" stroke-width="2"/>
+  <text x="215" y="270" font-family="Arial" font-size="16" font-weight="bold">Docker Environment</text>
+
+  <!-- Weaviate Vector DB -->
+  <rect x="100" y="300" width="180" height="100" fill="#adb5bd" rx="5" ry="5"/>
+  <text x="190" y="350" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Weaviate</text>
+  <text x="190" y="370" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Vector Database (Dutch)</text>
+  <text x="190" y="390" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 8080</text>
+  
+  <!-- Text2vec Embeddings -->
+  <rect x="100" y="420" width="180" height="80" fill="#adb5bd" rx="5" ry="5"/>
+  <text x="190" y="455" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle" fill="white">Text2Vec-Transformers</text>
+  <text x="190" y="475" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Embedding Model</text>
+  
+  <!-- API Service -->
+  <rect x="320" y="300" width="180" height="100" fill="#6c757d" rx="5" ry="5"/>
+  <text x="410" y="350" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">FastAPI Service</text>
+  <text x="410" y="370" font-family="Arial" font-size="12" text-anchor="middle" fill="white">RAG Implementation</text>
+  <text x="410" y="390" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 8000</text>
+  
+  <!-- Web Interface - Split into Prototype and Production -->
+  <rect x="320" y="420" width="85" height="100" fill="#6c757d" rx="5" ry="5"/>
+  <text x="362" y="455" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="white">Prototype</text>
+  <text x="362" y="470" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Streamlit</text>
+  <text x="362" y="485" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 8501</text>
+  
+  <rect x="415" y="420" width="85" height="100" fill="#6c757d" rx="5" ry="5"/>
+  <text x="457" y="455" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle" fill="white">Production</text>
+  <text x="457" y="470" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Nginx</text>
+  <text x="457" y="485" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 80</text>
+  
+  <!-- Mistral AI (replaced Ollama) -->
+  <rect x="540" y="300" width="160" height="220" fill="#073b4c" rx="5" ry="5"/>
+  <text x="620" y="350" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Mistral AI</text>
+  <text x="620" y="370" font-family="Arial" font-size="12" text-anchor="middle" fill="white">EU-based LLM Provider</text>
+  <text x="620" y="390" font-family="Arial" font-size="12" text-anchor="middle" fill="white">(French)</text>
+  <text x="620" y="410" font-family="Arial" font-size="12" text-anchor="middle" fill="white">GDPR Compliant</text>
+  
+  <!-- Deployment label -->
+  <rect x="540" y="520" width="160" height="30" fill="#20c997" rx="5" ry="5"/>
+  <text x="620" y="540" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle">Production: Hetzner (German)</text>
+  
+  <!-- Connections -->
+  <!-- Folder to Processor -->
+  <line x1="280" y1="180" x2="400" y2="180" stroke="#212529" stroke-width="2"/>
+  <polygon points="395,175 405,180 395,185" fill="#212529"/>
+  
+  <!-- Processor to Weaviate -->
+  <line x1="500" y1="230" x2="190" y2="300" stroke="#212529" stroke-width="2"/>
+  <polygon points="192,294 185,304 197,299" fill="#212529"/>
+  
+  <!-- Weaviate to API -->
+  <line x1="280" y1="350" x2="320" y2="350" stroke="#212529" stroke-width="2"/>
+  <polygon points="315,345 325,350 315,355" fill="#212529"/>
+  
+  <!-- API to Web Prototype -->
+  <line x1="410" y1="400" x2="362" y2="420" stroke="#212529" stroke-width="2"/>
+  <polygon points="359,415 365,425 368,415" fill="#212529"/>
+  
+  <!-- API to Web Production -->
+  <line x1="410" y1="400" x2="457" y2="420" stroke="#212529" stroke-width="2"/>
+  <polygon points="454,415 460,425 463,415" fill="#212529"/>
+  
+  <!-- API to Mistral -->
+  <line x1="500" y1="350" x2="540" y2="350" stroke="#212529" stroke-width="2"/>
+  <polygon points="535,345 545,350 535,355" fill="#212529"/>
+  
+  <!-- Text2Vec to Weaviate -->
+  <line x1="190" y1="420" x2="190" y2="400" stroke="#212529" stroke-width="2"/>
+  <polygon points="185,405 190,395 195,405" fill="#212529"/>
+  
+  <!-- Admin -->
+  <circle cx="40" cy="180" r="20" fill="#6c757d"/>
+  <line x1="40" y1="200" x2="40" y2="230" stroke="#6c757d" stroke-width="2"/>
+  <line x1="20" y1="210" x2="60" y2="210" stroke="#6c757d" stroke-width="2"/>
+  <line x1="20" y1="250" x2="40" y2="230" stroke="#6c757d" stroke-width="2"/>
+  <line x1="60" y1="250" x2="40" y2="230" stroke="#6c757d" stroke-width="2"/>
+  
+  <text x="40" y="280" font-family="Arial" font-size="14" text-anchor="middle">Admin</text>
+  
+  <!-- Admin to Folder arrow -->
+  <line x1="60" y1="180" x2="100" y2="180" stroke="#212529" stroke-width="2"/>
+  <polygon points="95,175 105,180 95,185" fill="#212529"/>
+  
+  <!-- End Users -->
+  <circle cx="410" cy="570" r="20" fill="#6c757d"/>
+  <line x1="410" y1="590" x2="410" y2="610" stroke="#6c757d" stroke-width="2"/>
+  <line x1="390" y1="600" x2="430" y2="600" stroke="#6c757d" stroke-width="2"/>
+  <line x1="390" y1="630" x2="410" y2="610" stroke="#6c757d" stroke-width="2"/>
+  <line x1="430" y1="630" x2="410" y2="610" stroke="#6c757d" stroke-width="2"/>
+  
+  <text x="410" y="650" font-family="Arial" font-size="14" text-anchor="middle">End Users</text>
+  
+  <!-- End Users to Web Interfaces -->
+  <line x1="390" y1="570" x2="362" y2="520" stroke="#212529" stroke-width="2"/>
+  <polygon points="359,525 365,515 367,525" fill="#212529"/>
+  
+  <line x1="430" y1="570" x2="457" y2="520" stroke="#212529" stroke-width="2"/>
+  <polygon points="454,525 460,515 463,525" fill="#212529"/>
+  
+  <!-- Legend -->
+  <rect x="630" y="90" width="100" height="120" fill="white" rx="5" ry="5" stroke="#6c757d" stroke-width="1"/>
+  <text x="680" y="110" font-family="Arial" font-size="12" font-weight="bold" text-anchor="middle">Legend</text>
+  
+  <rect x="640" y="120" width="15" height="15" fill="#ffd166"/>
+  <text x="680" y="132" font-family="Arial" font-size="10">Data Source</text>
+  
+  <rect x="640" y="145" width="15" height="15" fill="#118ab2"/>
+  <text x="680" y="157" font-family="Arial" font-size="10">Processor</text>
+  
+  <rect x="640" y="170" width="15" height="15" fill="#adb5bd"/>
+  <text x="680" y="182" font-family="Arial" font-size="10">Storage</text>
+  
+  <rect x="640" y="195" width="15" height="15" fill="#073b4c"/>
+  <text x="680" y="207" font-family="Arial" font-size="10">AI Service</text>
+  
+  <!-- Key Features Box -->
+  <rect x="600" y="220" width="140" height="70" fill="white" rx="5" ry="5" stroke="#6c757d" stroke-width="1"/>
+  <text x="670" y="235" font-family="Arial" font-size="10" font-weight="bold" text-anchor="middle">Key Features</text>
+  <text x="670" y="250" font-family="Arial" font-size="9" text-anchor="middle">• EU Data Sovereignty</text>
+  <text x="670" y="265" font-family="Arial" font-size="9" text-anchor="middle">• GDPR Compliance</text>
+  <text x="670" y="280" font-family="Arial" font-size="9" text-anchor="middle">• Folder-based ingest</text>
+</svg>

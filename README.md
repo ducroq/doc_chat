@@ -71,7 +71,7 @@ doc-chat/
 
 ## Architecture
 
-![Simplified RAG System with Folder-Based Document Ingestion](docs/simplified-architecture.svg)
+![Simplified RAG System with Folder-Based Document Ingestion](docs/architecture-diagram.svg)
 
 ### Class diagram
 
