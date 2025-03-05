@@ -28,6 +28,14 @@ After evaluating multiple options across aspects like privacy, maintenance, scal
 - Simple Python-based deployment
 - Text-only document processing for simplicity
 
+## Prerequisites
+
+- On Windows, update the subsystem for Linux
+    ```bash
+    wsl --update
+    ```
+- Install [Docker](https://docs.docker.com/get-started/get-docker/).
+
 ## Technology stack
 
 | Component | Technology | Purpose |
