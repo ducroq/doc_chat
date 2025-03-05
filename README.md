@@ -1,10 +1,73 @@
 # RAG System with Folder Watching
 
-This setup creates a document chat system where:
+## Introduction
+
+EU-compliant document-based Retrieval-Augmented Generation (RAG) system designed for academic environments:
 - Admins add text (.txt) files to a watched folder
 - Documents are automatically processed and indexed
 - End-users can query the documents through a web interface
-- The LLM runs locally through Ollama
+
+By using Docker and standardized components, the system can be easily deployed to different environments while maintaining consistency and compliance.
+
+### Key Design Decisions
+
+After evaluating multiple options across aspects like privacy, maintenance, scalability, and costs, we selected:
+
+- **Weaviate** (Dutch) for vector database - providing EU-based, self-hostable vector search
+- **Mistral AI** (French) for LLM services - offering EU-compliant language model capabilities
+- **FastAPI** for backend - enabling efficient API development with Python
+- **Streamlit** for prototype frontend - allowing rapid UI development (production on Hetzner)
+- **Docker** for containerization - ensuring consistent deployment across environments
+
+### Key advantages
+
+- Full EU data sovereignty
+- GDPR compliance by design
+- Open source components where possible
+- Scalable to hundreds of users
+- Simple Python-based deployment
+- Text-only document processing for simplicity
+
+## Technology Stack
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Vector Database** | Weaviate | Stores and searches document embeddings |
+| **Text Embeddings** | text2vec-transformers | Converts text to vector embeddings |
+| **LLM Provider** | Mistral AI | Generates responses based on retrieved context |
+| **Backend API** | FastAPI | Handles requests, orchestrates RAG process |
+| **Document Processor** | Python/watchdog | Monitors and processes new text documents |
+| **Prototype Frontend** | Streamlit | Provides user chat interface |
+| **Production Frontend** | HTML/JS + Nginx | Lightweight production web interface |
+| **Containerization** | Docker | Packages all components for deployment |
+| **Production Hosting** | Hetzner | EU-based cloud provider for production |
+
+## Project Structure
+
+```
+doc-chat/
+├── docker-compose.yml
+├── .env
+├── data/                  # Watched folder for text documents
+├── docs/                  # Project documentation
+├── processor/             # Document processor service
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── processor.py
+├── api/                   # API service
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── main.py
+├── web-prototype/         # Streamlit prototype
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── app.py
+└── web-production/        # Production web interface
+    ├── Dockerfile
+    ├── static/
+    ├── index.html
+    └── nginx.conf
+```
 
 ## Architecture
 ![Simplified RAG System with Folder-Based Document Ingestion](docs/simplified-architecture.svg)
@@ -288,3 +351,29 @@ flowchart TD
     class DocProcessor,Weaviate,TextVectorizer,FastAPI,Nginx,HTML,OllamaService service
     class Browser external
 ```
+
+## Docker compose
+
+Docker Compose is a tool that helps you define and manage multi-container Docker applications. In the doc chat system, the docker-compose.yml file defines three services:
+
+- A Weaviate vector database container
+- A FastAPI backend container
+- A Streamlit frontend container
+
+The file also specifies how these containers connect to each other, what ports they expose, and what environment variables they use. For instance, your backend depends on Weaviate, and your frontend depends on the backend.
+
+
+### Running the System
+
+Start the system with:
+
+```bash
+docker-compose up --build
+```
+which builds and starts all three containers together. 
+
+Access:
+- Web interface: http://localhost:80
+- API documentation: http://localhost:8000/docs
+- Weaviate console: http://localhost:8080
+
