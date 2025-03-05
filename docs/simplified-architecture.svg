@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+  <!-- Background -->
+  <rect width="800" height="600" fill="#f8f9fa" rx="10" ry="10"/>
+  
+  <!-- Title -->
+  <text x="400" y="40" font-family="Arial" font-size="24" font-weight="bold" text-anchor="middle">Simplified RAG System with Folder-Based Document Ingestion</text>
+  
+  <!-- Host Machine Container -->
+  <rect x="50" y="80" width="700" height="480" fill="#e9ecef" rx="10" ry="10" stroke="#6c757d" stroke-width="2" stroke-dasharray="5,5"/>
+  <text x="120" y="100" font-family="Arial" font-size="16" font-weight="bold">Host Machine</text>
+  
+  <!-- Watched Folder -->
+  <rect x="100" y="130" width="180" height="100" fill="#ffd166" rx="5" ry="5" stroke="#e09f3e" stroke-width="2"/>
+  <text x="190" y="170" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle">Watched Folder</text>
+  <text x="190" y="190" font-family="Arial" font-size="12" text-anchor="middle">/docs</text>
+  <text x="190" y="210" font-family="Arial" font-size="12" text-anchor="middle">Text Files (.txt)</text>
+  
+  <!-- Document Processor Service -->
+  <rect x="400" y="130" width="200" height="100" fill="#118ab2" rx="5" ry="5"/>
+  <text x="500" y="170" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Document Processor</text>
+  <text x="500" y="190" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Watches folder for changes</text>
+  <text x="500" y="210" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Chunks text + indexes</text>
+
+  <!-- Docker Environment Container -->
+  <rect x="70" y="250" width="660" height="290" fill="#dee2e6" rx="10" ry="10" stroke="#6c757d" stroke-width="2"/>
+  <text x="215" y="270" font-family="Arial" font-size="16" font-weight="bold">Docker Environment</text>
+
+  <!-- Weaviate Vector DB -->
+  <rect x="100" y="300" width="180" height="100" fill="#adb5bd" rx="5" ry="5"/>
+  <text x="190" y="350" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Weaviate</text>
+  <text x="190" y="370" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Vector Database</text>
+  <text x="190" y="390" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 8080</text>
+  
+  <!-- Text2vec Embeddings -->
+  <rect x="100" y="420" width="180" height="80" fill="#adb5bd" rx="5" ry="5"/>
+  <text x="190" y="455" font-family="Arial" font-size="14" font-weight="bold" text-anchor="middle" fill="white">Text2Vec</text>
+  <text x="190" y="475" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Embedding Model</text>
+  
+  <!-- API Service -->
+  <rect x="320" y="300" width="180" height="100" fill="#6c757d" rx="5" ry="5"/>
+  <text x="410" y="350" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Query API</text>
+  <text x="410" y="370" font-family="Arial" font-size="12" text-anchor="middle" fill="white">RAG Implementation</text>
+  <text x="410" y="390" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 8000</text>
+  
+  <!-- Web Interface -->
+  <rect x="320" y="420" width="180" height="100" fill="#6c757d" rx="5" ry="5"/>
+  <text x="410" y="470" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Web Interface</text>
+  <text x="410" y="490" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 80/443</text>
+  
+  <!-- Ollama -->
+  <rect x="540" y="300" width="160" height="220" fill="#073b4c" rx="5" ry="5"/>
+  <text x="620" y="350" font-family="Arial" font-size="16" font-weight="bold" text-anchor="middle" fill="white">Ollama</text>
+  <text x="620" y="370" font-family="Arial" font-size="12" text-anchor="middle" fill="white">LLM Provider</text>
+  <text x="620" y="390" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Port 11434</text>
+  <text x="620" y="410" font-family="Arial" font-size="12" text-anchor="middle" fill="white">Llama Models</text>
+  
+  <!-- Connections -->
+  <!-- Folder to Processor -->
+  <line x1="280" y1="180" x2="400" y2="180" stroke="#212529" stroke-width="2"/>
+  <polygon points="395,175 405,180 395,185" fill="#212529"/>
+  
+  <!-- Processor to Weaviate -->
+  <line x1="500" y1="230" x2="190" y2="300" stroke="#212529" stroke-width="2"/>
+  <polygon points="192,294 185,304 197,299" fill="#212529"/>
+  
+  <!-- Weaviate to API -->
+  <line x1="280" y1="350" x2="320" y2="350" stroke="#212529" stroke-width="2"/>
+  <polygon points="315,345 325,350 315,355" fill="#212529"/>
+  
+  <!-- API to Web -->
+  <line x1="410" y1="400" x2="410" y2="420" stroke="#212529" stroke-width="2"/>
+  <polygon points="405,415 410,425 415,415" fill="#212529"/>
+  
+  <!-- API to Ollama -->
+  <line x1="500" y1="350" x2="540" y2="350" stroke="#212529" stroke-width="2"/>
+  <polygon points="535,345 545,350 535,355" fill="#212529"/>
+  
+  <!-- Text2Vec to Weaviate -->
+  <line x1="190" y1="420" x2="190" y2="400" stroke="#212529" stroke-width="2"/>
+  <polygon points="185,405 190,395 195,405" fill="#212529"/>
+  
+  <!-- Admin -->
+  <circle cx="40" cy="180" r="20" fill="#6c757d"/>
+  <line x1="40" y1="200" x2="40" y2="230" stroke="#6c757d" stroke-width="2"/>
+  <line x1="20" y1="210" x2="60" y2="210" stroke="#6c757d" stroke-width="2"/>
+  <line x1="20" y1="250" x2="40" y2="230" stroke="#6c757d" stroke-width="2"/>
+  <line x1="60" y1="250" x2="40" y2="230" stroke="#6c757d" stroke-width="2"/>
+  
+  <text x="40" y="280" font-family="Arial" font-size="14" text-anchor="middle">Admin</text>
+  
+  <!-- Admin to Folder arrow -->
+  <line x1="60" y1="180" x2="100" y2="180" stroke="#212529" stroke-width="2"/>
+  <polygon points="95,175 105,180 95,185" fill="#212529"/>
+  
+  <!-- End Users -->
+  <circle cx="410" cy="570" r="20" fill="#6c757d"/>
+  <line x1="410" y1="590" x2="410" y2="610" stroke="#6c757d" stroke-width="2"/>
+  <line x1="390" y1="600" x2="430" y2="600" stroke="#6c757d" stroke-width="2"/>
+  <line x1="390" y1="630" x2="410" y2="610" stroke="#6c757d" stroke-width="2"/>
+  <line x1="430" y1="630" x2="410" y2="610" stroke="#6c757d" stroke-width="2"/>
+  
+  <text x="410" y="560" font-family="Arial" font-size="14" text-anchor="middle">End Users</text>
+  
+  <!-- End Users to Web Interface -->
+  <line x1="410" y1="570" x2="410" y2="520" stroke="#212529" stroke-width="2"/>
+  <polygon points="405,525 410,515 415,525" fill="#212529"/>
+</svg>
