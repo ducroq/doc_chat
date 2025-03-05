@@ -9,7 +9,7 @@ EU-compliant document-based Retrieval-Augmented Generation (RAG) system designed
 
 By using Docker and standardized components, the system can be easily deployed to different environments while maintaining consistency and compliance.
 
-### Key Design Decisions
+### Key design decisions
 
 After evaluating multiple options across aspects like privacy, maintenance, scalability, and costs, we selected:
 
@@ -28,7 +28,7 @@ After evaluating multiple options across aspects like privacy, maintenance, scal
 - Simple Python-based deployment
 - Text-only document processing for simplicity
 
-## Technology Stack
+## Technology stack
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
@@ -42,7 +42,7 @@ After evaluating multiple options across aspects like privacy, maintenance, scal
 | **Containerization** | Docker | Packages all components for deployment |
 | **Production Hosting** | Hetzner | EU-based cloud provider for production |
 
-## Project Structure
+## Project structure
 
 ```
 doc-chat/
@@ -70,10 +70,10 @@ doc-chat/
 ```
 
 ## Architecture
+
 ![Simplified RAG System with Folder-Based Document Ingestion](docs/simplified-architecture.svg)
 
 ### Class diagram
-
 
 ```mermaid
 classDiagram
@@ -157,7 +157,6 @@ classDiagram
     WebServer --> APIService : forwards requests to
 ```
 
-
 ### Document processing flow
 
 ```mermaid
@@ -210,8 +209,7 @@ sequenceDiagram
     WebUI-->>User: Display answer and sources
 ```
 
-### RAG System Component Diagram
-
+### RAG system component diagram
 
 ```mermaid
 flowchart TD
@@ -291,8 +289,7 @@ flowchart TD
     class Ollama,LlamaModel llm
 ```
 
-
-### RAG System Deployment Diagram
+### RAG system deployment diagram
 
 ```mermaid
 flowchart TD
@@ -362,8 +359,7 @@ Docker Compose is a tool that helps you define and manage multi-container Docker
 
 The file also specifies how these containers connect to each other, what ports they expose, and what environment variables they use. For instance, your backend depends on Weaviate, and your frontend depends on the backend.
 
-
-### Running the System
+### Running the system
 
 Start the system with:
 
