@@ -1,5 +1,20 @@
 Write-Host "Starting EU-compliant RAG system..." -ForegroundColor Cyan
 
+# Check if Docker is running first
+try {
+    $dockerStatus = docker info 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Docker is not running. Please start Docker Desktop first." -ForegroundColor Red
+        exit 1
+    } else {
+        Write-Host "Docker is running." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "Error checking Docker status: $_" -ForegroundColor Red
+    Write-Host "Please ensure Docker is installed and running, then try again." -ForegroundColor Red
+    exit 1
+}
+
 # Start Weaviate and text vectorizer
 Write-Host "Starting Weaviate and text vectorizer..." -ForegroundColor Yellow
 docker-compose up -d weaviate t2v-transformers
