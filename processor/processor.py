@@ -8,6 +8,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
+from weaviate.classes.config import Configure
 from dotenv import load_dotenv
 
 # Configure logging
@@ -107,6 +108,8 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
     return chunks
 
 class TextFileHandler(FileSystemEventHandler):
+            # If you're using a tracker, update it to remove the file
+
     def __init__(self, weaviate_client):
         self.weaviate_client = weaviate_client
     
@@ -123,16 +126,37 @@ class TextFileHandler(FileSystemEventHandler):
         self.process_file(event.src_path)
 
     def on_deleted(self, event):
+        """Handle file deletion events."""
         if event.is_directory or not event.src_path.endswith('.txt'):
             return
+        
         logger.info(f"Text file deleted: {event.src_path}")
         
         # Get the filename without the path
         filename = os.path.basename(event.src_path)
         
-        # Delete existing chunks for this file from Weaviate
+        # Delete the chunks from Weaviate
         self.delete_existing_chunks(filename)
-
+        
+        # If you're using a tracker, update it to remove the file
+        tracker_path = os.path.join(os.path.dirname(event.src_path), ".processed_files.json")
+        if os.path.exists(tracker_path):
+            try:
+                with open(tracker_path, 'r') as f:
+                    tracker_data = json.load(f)
+                
+                # Remove the file from the tracker if it exists
+                if filename in tracker_data:
+                    del tracker_data[filename]
+                    
+                    # Save the updated tracker
+                    with open(tracker_path, 'w') as f:
+                        json.dump(tracker_data, f, indent=2)
+                    
+                    logger.info(f"Removed {filename} from processing tracker")
+            except Exception as e:
+                logger.error(f"Error updating tracker after file deletion: {str(e)}")
+                
     def validate_and_get_encoding(self, file_path):
         """
         Validate that a file is a readable text file and return the correct encoding.
@@ -201,24 +225,27 @@ class TextFileHandler(FileSystemEventHandler):
     def delete_existing_chunks(self, filename):
         """Delete existing chunks for a file."""
         try:
+            # Get the collection
             collection = self.weaviate_client.collections.get("DocumentChunk")
             
-            # Create a proper filter object using the where filter builder
-            where_filter = weaviate.classes.query.Filter.by_property("filename").equal(filename)
+            # Create a proper filter for Weaviate 4.x
+            from weaviate.classes.query import Filter
+            where_filter = Filter.by_property("filename").equal(filename)
             
-            # Delete objects with the proper filter syntax
+            # Delete using the filter
             result = collection.data.delete_many(
                 where=where_filter
             )
             
-            if result and hasattr(result, 'successful'):
+            # Log the result
+            if hasattr(result, 'successful'):
                 logger.info(f"Deleted {result.successful} existing chunks for {filename}")
             else:
                 logger.info(f"No existing chunks found for {filename}")
                 
         except Exception as e:
             logger.error(f"Error deleting existing chunks: {str(e)}")
-            
+                        
     def store_chunk(self, content, filename, chunk_id):
         """Store a chunk in Weaviate."""
         try:
@@ -277,42 +304,38 @@ def setup_weaviate_schema(client):
     """Set up the Weaviate schema for document chunks."""
     logger.info("Setting up Weaviate schema")
     
-    # Check if the collection already exists
     try:
+        # Check if the collection already exists
         if not client.collections.exists("DocumentChunk"):
-            # Collection doesn't exist, create it
-            collection = client.collections.create(
+            
+            # Collection doesn't exist, create it            
+            client.collections.create(
                 name="DocumentChunk",
-                vectorizer_config=weaviate.config.Configure.Vectorizer.text2vec_transformers(
-                    vectorize_collection_name=False
-                ),
+                vectorizer_config=Configure.Vectorizer.text2vec_transformers(),
                 properties=[
-                    weaviate.config.Property(
-                        name="content",
-                        data_type=weaviate.config.DataType.TEXT,
-                        vectorize_property_name=False,
-                        skip_vectorization=False
-                    ),
-                    weaviate.config.Property(
-                        name="filename",
-                        data_type=weaviate.config.DataType.TEXT,
-                        vectorize_property_name=False,
-                        skip_vectorization=True
-                    ),
-                    weaviate.config.Property(
-                        name="chunkId",
-                        data_type=weaviate.config.DataType.INT,
-                        vectorize_property_name=False,
-                        skip_vectorization=True
-                    )
+                    {
+                        "name": "content",
+                        "dataType": ["text"]
+                    },
+                    {
+                        "name": "filename",
+                        "dataType": ["text"]
+                    },
+                    {
+                        "name": "chunkId",
+                        "dataType": ["int"]
+                    }
                 ]
             )
+            
             logger.info("DocumentChunk collection created in Weaviate")
         else:
             logger.info("DocumentChunk collection already exists in Weaviate")
     except Exception as e:
         logger.error(f"Error setting up Weaviate schema: {str(e)}")
-            
+        import traceback
+        logger.error(traceback.format_exc())
+        
 def connect_with_retry(weaviate_url, max_retries=10, retry_delay=5):
     """Connect to Weaviate with retry mechanism."""
     # Parse the URL to get components

@@ -1,8 +1,27 @@
 
 
-> docker-compose config    
+```bash
+docker-compose config    
+```
 
+```bash
 docker-compose ps  
+```
+
+Stop all running containers
+```bash
+docker-compose down
+```
+
+List all Docker volumes to find the Weaviate data volume
+```bash
+docker volume ls
+```
+
+Remove the Weaviate data volume
+```bash
+docker volume rm doc_chat_weaviate_data
+```
 
 
 Rebuild and restart a container, e.g. the processor:

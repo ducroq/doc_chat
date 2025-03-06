@@ -1,3 +1,43 @@
+Next Steps
+Based on your todo list and the current status, here's what I'd recommend focusing on:
+
+Fix the document processor issues:
+
+Implement better error handling around chunk deletion
+Add more logging to track the document processing flow
+
+TextFileHandler(FileSystemEventHandler):
+We are using a tracker, so  update json if something changes. has this been done now?
+
+
+
+
+Verify the data storage:
+
+Use the API to query for stored documents
+Check if vector embeddings are being created correctly
+
+
+Complete end-to-end testing:
+
+Test document upload → processing → querying → response generation
+Test with various document types and query formats
+
+
+Improve the prompt engineering for Mistral AI:
+
+Refine the system prompt in the chat endpoint
+Adjust temperature and other generation parameters
+
+
+Add basic document statistics:
+
+Implement an API endpoint to show document counts, total chunks, etc.
+
+
+
+Would you like me to provide specific code implementations for any of these areas? I can help with debugging the processor, improving the chunking strategy, or enhancing the API endpoints.
+
 # EU-Compliant RAG System: Debug & Prototype Todo List
 
 ## Debugging & Testing Priority
