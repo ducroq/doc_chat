@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import logging
 import uuid
@@ -16,6 +17,64 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+class ProcessingTracker:
+    def __init__(self, tracker_file_path="processed_files.json"):
+        self.tracker_file_path = tracker_file_path
+        self.processed_files = self._load_tracker()
+    
+    def _load_tracker(self):
+        """Load the tracker file or create it if it doesn't exist."""
+        if os.path.exists(self.tracker_file_path):
+            try:
+                with open(self.tracker_file_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading tracker file: {str(e)}")
+                return {}
+        return {}
+    
+    def _save_tracker(self):
+        """Save the tracker data to file."""
+        try:
+            with open(self.tracker_file_path, 'w') as f:
+                json.dump(self.processed_files, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving tracker file: {str(e)}")
+    
+    def should_process_file(self, file_path):
+        """
+        Determine if a file should be processed based on modification time.
+        Returns True if file is new or modified since last processing.
+        """
+        try:
+            file_mod_time = os.path.getmtime(file_path)
+            file_key = os.path.basename(file_path)
+            
+            # If file not in tracker or has been modified, process it
+            if (file_key not in self.processed_files or 
+                file_mod_time > self.processed_files[file_key]['last_modified']):
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error checking file status: {str(e)}")
+            # If in doubt, process the file
+            return True
+    
+    def mark_as_processed(self, file_path):
+        """Mark a file as processed with current timestamps."""
+        try:
+            file_mod_time = os.path.getmtime(file_path)
+            file_key = os.path.basename(file_path)
+            
+            self.processed_files[file_key] = {
+                'path': file_path,
+                'last_modified': file_mod_time,
+                'last_processed': time.time()
+            }
+            self._save_tracker()
+        except Exception as e:
+            logger.error(f"Error marking file as processed: {str(e)}")
 
 def chunk_text(text, max_chunk_size=1000, overlap=200):
     """
@@ -62,6 +121,17 @@ class TextFileHandler(FileSystemEventHandler):
             return
         logger.info(f"Text file modified: {event.src_path}")
         self.process_file(event.src_path)
+
+    def on_deleted(self, event):
+        if event.is_directory or not event.src_path.endswith('.txt'):
+            return
+        logger.info(f"Text file deleted: {event.src_path}")
+        
+        # Get the filename without the path
+        filename = os.path.basename(event.src_path)
+        
+        # Delete existing chunks for this file from Weaviate
+        self.delete_existing_chunks(filename)
 
     def validate_and_get_encoding(self, file_path):
         """
@@ -181,17 +251,28 @@ class TextFileHandler(FileSystemEventHandler):
             logger.info(f"Stored chunk {chunk_id} from {filename}")
         except Exception as e:
             logger.error(f"Error storing chunk: {str(e)}")
-    
-    def process_existing_files(self, data_folder):
-        """Process all existing text files in the data folder."""
-        logger.info(f"Scanning for existing files in {data_folder}")
-        text_files = glob.glob(os.path.join(data_folder, "*.txt"))
-        logger.info(f"Found {len(text_files)} existing text files")
         
+    def process_existing_files(self, data_folder):
+        """Process only new or modified text files in the data folder."""
+        logger.info(f"Scanning for files in {data_folder}")
+        text_files = glob.glob(os.path.join(data_folder, "*.txt"))
+        logger.info(f"Found {len(text_files)} text files")
+        
+        # Initialize the processing tracker
+        tracker = ProcessingTracker(os.path.join(data_folder, ".processed_files.json"))
+        
+        files_processed = 0
         for file_path in text_files:
-            logger.info(f"Processing existing file: {file_path}")
-            self.process_file(file_path)
-
+            if tracker.should_process_file(file_path):
+                logger.info(f"Processing new/modified file: {file_path}")
+                self.process_file(file_path)
+                tracker.mark_as_processed(file_path)
+                files_processed += 1
+            else:
+                logger.info(f"Skipping already processed file: {file_path}")
+        
+        logger.info(f"Processed {files_processed} new/modified files out of {len(text_files)} total files")
+        
 def setup_weaviate_schema(client):
     """Set up the Weaviate schema for document chunks."""
     logger.info("Setting up Weaviate schema")
