@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import uuid
+import glob
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import weaviate
@@ -65,28 +66,38 @@ class TextFileHandler(FileSystemEventHandler):
         """Process a text file and store chunks in Weaviate."""
         logger.info(f"Processing file: {file_path}")
         
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-                logger.info(f"File content length: {len(content)} characters")
-                
-                # Get the filename without the path
-                filename = os.path.basename(file_path)
-                
-                # Delete existing chunks for this file if any
-                self.delete_existing_chunks(filename)
-                
-                # Split the content into chunks
-                chunks = chunk_text(content)
-                logger.info(f"Split into {len(chunks)} chunks")
-                
-                # Store each chunk in Weaviate
-                for i, chunk_content in enumerate(chunks):
-                    self.store_chunk(chunk_content, filename, i)
+        # List of encodings to try
+        encodings = ['utf-8', 'latin1', 'cp1252']
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as file:
+                    content = file.read()
+                    logger.info(f"File content length: {len(content)} characters")
                     
-                logger.info(f"File {filename} processed successfully")
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {str(e)}")
+                    # Get the filename without the path
+                    filename = os.path.basename(file_path)
+                    
+                    # Delete existing chunks for this file if any
+                    self.delete_existing_chunks(filename)
+                    
+                    # Split the content into chunks
+                    chunks = chunk_text(content)
+                    logger.info(f"Split into {len(chunks)} chunks")
+                    
+                    # Store each chunk in Weaviate
+                    for i, chunk_content in enumerate(chunks):
+                        self.store_chunk(chunk_content, filename, i)
+                        
+                    logger.info(f"File {filename} processed successfully")
+                    return  # Exit if successful
+            except UnicodeDecodeError:
+                logger.warning(f"Failed to read {file_path} with {encoding} encoding. Trying next encoding...")
+            except Exception as e:
+                logger.error(f"Error processing file {file_path}: {str(e)}")
+                return  # Exit on other errors
+        
+        logger.error(f"Failed to process {file_path} with any of the attempted encodings")
 
     def delete_existing_chunks(self, filename):
         """Delete existing chunks for a file."""
@@ -123,6 +134,16 @@ class TextFileHandler(FileSystemEventHandler):
             logger.info(f"Stored chunk {chunk_id} from {filename}")
         except Exception as e:
             logger.error(f"Error storing chunk: {str(e)}")
+    
+    def process_existing_files(self, data_folder):
+        """Process all existing text files in the data folder."""
+        logger.info(f"Scanning for existing files in {data_folder}")
+        text_files = glob.glob(os.path.join(data_folder, "*.txt"))
+        logger.info(f"Found {len(text_files)} existing text files")
+        
+        for file_path in text_files:
+            logger.info(f"Processing existing file: {file_path}")
+            self.process_file(file_path)
 
 def setup_weaviate_schema(client):
     """Set up the Weaviate schema for document chunks."""
@@ -192,7 +213,7 @@ def main():
         logger.info(f"Connecting to Weaviate at {weaviate_url}")
         client = weaviate.Client(
             weaviate_url,
-            startup_period=60  # Increase this to 60 seconds, since Windows typically has slightly slower file operations through Docker:
+            startup_period=60  # Increase this to 60 seconds to allow more time for Weaviate to start
         )        
         # Check connection
         if client.is_ready():
@@ -206,6 +227,12 @@ def main():
             logger.info(f"Starting to watch folder: {data_folder}")
             
             event_handler = TextFileHandler(client)
+            
+            # Process existing files first
+            logger.info("Processing existing files in data folder")
+            event_handler.process_existing_files(data_folder)
+            
+            # Then set up watchdog for future changes
             observer = Observer()
             observer.schedule(event_handler, data_folder, recursive=False)
             observer.start()
