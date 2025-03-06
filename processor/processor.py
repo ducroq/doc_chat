@@ -132,17 +132,23 @@ class TextFileHandler(FileSystemEventHandler):
         """Delete existing chunks for a file."""
         try:
             collection = self.weaviate_client.collections.get("DocumentChunk")
-
-            collection.data.delete_many(
-                where={
-                    "path": ["filename"],
-                    "operator": "Equal",
-                    "valueString": filename
-                })
-            logger.info(f"Deleted existing chunks for {filename}")
+            
+            # Create a proper filter object using the where filter builder
+            where_filter = weaviate.classes.query.Filter.by_property("filename").equal(filename)
+            
+            # Delete objects with the proper filter syntax
+            result = collection.data.delete_many(
+                where=where_filter
+            )
+            
+            if result and hasattr(result, 'successful'):
+                logger.info(f"Deleted {result.successful} existing chunks for {filename}")
+            else:
+                logger.info(f"No existing chunks found for {filename}")
+                
         except Exception as e:
             logger.error(f"Error deleting existing chunks: {str(e)}")
-
+            
     def store_chunk(self, content, filename, chunk_id):
         """Store a chunk in Weaviate."""
         try:
