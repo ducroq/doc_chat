@@ -1,4 +1,10 @@
 
+
+> docker-compose config    
+
+docker-compose ps  
+
+
 Rebuild and restart a container, e.g. the processor:
 ```bash
 docker-compose stop processor

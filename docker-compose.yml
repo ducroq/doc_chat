@@ -3,7 +3,7 @@ services:
     image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
     ports:
       - 8080:8080
-      # - 50051:50051
+      - 50051:50051
     command:
       - --host
       - 0.0.0.0
@@ -47,7 +47,7 @@ services:
   api:
     build: ./api
     ports:
-      - "8000:8000"
+      - 8000:8000
     environment:
       - WEAVIATE_URL=http://weaviate:8080
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
@@ -58,7 +58,7 @@ services:
   web-prototype:
     build: ./web-prototype
     ports:
-      - "8501:8501"
+      - 8501:8501
     environment:
       - API_URL=http://api:8000
     depends_on:

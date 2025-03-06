@@ -3,10 +3,9 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import weaviate
-import httpx
+from weaviate.config import AdditionalConfig, Timeout
 from dotenv import load_dotenv
-from mistralai.client import MistralClient
-from mistralai.models.chat_completion import ChatMessage
+from mistralai import Mistral
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -21,19 +20,43 @@ app = FastAPI(title="EU-Compliant RAG API")
 # Initialize Weaviate client
 weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
+mistral_model = os.getenv("MISTRAL_MODEL", "mistral-tiny")
 
 # Initialize Mistral client
 mistral_client = None
 if mistral_api_key:
     try:
-        mistral_client = MistralClient(api_key=mistral_api_key)
+        mistral_client = Mistral(api_key=mistral_api_key)
         logger.info("Mistral client initialized")
     except Exception as e:
         logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
 # Create Weaviate client
 try:
-    client = weaviate.Client(weaviate_url)
+    # Parse the URL to get components
+    use_https = weaviate_url.startswith("https://")
+    host_part = weaviate_url.replace("http://", "").replace("https://", "")
+    
+    # Handle port if specified
+    if ":" in host_part:
+        host, port = host_part.split(":")
+        port = int(port)
+    else:
+        host = host_part
+        port = 443 if use_https else 80
+    
+    # Connect to Weaviate using the same method as the processor
+    client = weaviate.connect_to_custom(
+        http_host=host,
+        http_port=port,
+        http_secure=use_https,
+        grpc_host=host,
+        grpc_port=50051,  # Default gRPC port
+        grpc_secure=use_https,
+        additional_config=AdditionalConfig(
+            timeout=Timeout(init=60, query=30, insert=30)
+        )
+    )
     logger.info(f"Connected to Weaviate at {weaviate_url}")
 except Exception as e:
     logger.error(f"Failed to connect to Weaviate: {str(e)}")
@@ -65,21 +88,21 @@ async def search_documents(query: Query):
     
     try:
         # Search Weaviate for relevant chunks
-        result = client.query.get(
-            "DocumentChunk", ["content", "filename", "chunkId"]
-        ).with_near_text({
-            "concepts": [query.question]
-        }).with_limit(5).do()
+        collection = client.collections.get("DocumentChunk")
+        response = collection.query.near_text(
+            query=query.question,
+            limit=5,
+            return_properties=["content", "filename", "chunkId"]
+        ).do()
         
-        if "errors" in result:
-            logger.error(f"Weaviate query error: {result['errors']}")
-            raise HTTPException(status_code=500, detail="Error querying the vector database")
-        
-        chunks = result.get("data", {}).get("Get", {}).get("DocumentChunk", [])
+        # Format results
+        results = []
+        for obj in response.objects:
+            results.append(obj.properties)
         
         return {
             "query": query.question,
-            "results": chunks
+            "results": results
         }
         
     except Exception as e:
@@ -96,36 +119,38 @@ async def chat(query: Query):
         raise HTTPException(status_code=503, detail="Mistral API client not configured")
     
     try:
-        # Search Weaviate for relevant chunks
-        search_result = client.query.get(
-            "DocumentChunk", ["content", "filename", "chunkId"]
-        ).with_near_text({
-            "concepts": [query.question]
-        }).with_limit(3).do()
+        # Get the collection
+        collection = client.collections.get("DocumentChunk")
         
-        chunks = search_result.get("data", {}).get("Get", {}).get("DocumentChunk", [])
+        # Search Weaviate for relevant chunks using v4 API
+        search_result = collection.query.near_text(
+            query=query.question,
+            limit=3,
+            return_properties=["content", "filename", "chunkId"]
+        )
         
-        if not chunks:
+        # Check if we got any results
+        if len(search_result.objects) == 0:
             return {
                 "answer": "I couldn't find any relevant information to answer your question.",
                 "sources": []
             }
         
         # Format context from chunks
-        context = "\n\n".join([chunk["content"] for chunk in chunks])
+        context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
         
         # Format sources for citation
-        sources = [{"filename": chunk["filename"], "chunkId": chunk["chunkId"]} 
-                   for chunk in chunks]
+        sources = [{"filename": obj.properties["filename"], "chunkId": obj.properties["chunkId"]} 
+                   for obj in search_result.objects]
         
         # Use Mistral client to generate response
         messages = [
-            ChatMessage(role="system", content="You are a helpful assistant that answers questions based on the provided document context. Stick to the information in the context. If you don't know the answer, say so."),
-            ChatMessage(role="user", content=f"Context:\n{context}\n\nQuestion: {query.question}")
+            {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided document context. Stick to the information in the context. If you don't know the answer, say so."},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query.question}"}
         ]
         
-        chat_response = mistral_client.chat(
-            model="mistral-tiny",
+        chat_response = mistral_client.chat.complete(
+            model=mistral_model,
             messages=messages,
             temperature=0.7,
         )

@@ -7,16 +7,12 @@ doc_chat/
 │   ├── Dockerfile
 │   ├── main.py
 │   ├── requirements.txt
-├── data/
-│   ├── eu_info.txt
-│   ├── gdpr_info.txt
-│   ├── test1.txt
 ├── docs/
 │   ├── architecture-diagram.svg
 │   ├── chat_with_your_data.md
+│   ├── docker_debugging_notes.md
 │   ├── llm-comparison.md
 │   ├── requirements-table.md
-│   ├── setup_old.md
 │   ├── simplified-architecture.svg
 │   ├── todo.md
 ├── processor/
@@ -37,7 +33,6 @@ doc_chat/
 │   ├── app.py
 │   ├── requirements.txt
 ├── LICENSE
-├── NOW
 ├── README.md
 ├── docker-compose.yml
 ├── start.ps1
@@ -218,25 +213,6 @@ python-dotenv==1.0.0
 weaviate-client==3.24.1
 httpx==0.25.1
 mistralai==0.0.8
-```
-
-
-# data\eu_info.txt
-```cmake
-The European Union (EU) is a political and economic union of 27 member states located primarily in Europe. The EU has developed an internal single market through a standardized system of laws that apply in all member states in matters where members have agreed to act as one.
-```
-
-
-# data\gdpr_info.txt
-```cmake
-GDPR stands for General Data Protection Regulation. It is a regulation in EU law on data protection and privacy for all individuals within the European Union and the European Economic Area. It also addresses the transfer of personal data outside the EU and EEA areas."
-```
-
-
-# data\test1.txt
-```cmake
-This is a test document for our EU-compliant RAG system.
-
 ```
 
 
@@ -475,6 +451,52 @@ Benefits:
 ```
 
 
+# docs\docker_debugging_notes.md
+```markdown
+
+Rebuild and restart a container, e.g. the processor:
+```bash
+docker-compose stop processor
+docker-compose build processor
+docker-compose up -d processor
+```
+
+Check the logs to see if it's processing the existing files (--follow gives real-time logs):
+
+```bash
+docker logs doc_chat-processor-1 --follow
+```
+
+Check if the processor environment variables are correct:
+```bash
+docker inspect doc_chat-processor-1 | Select-String "DATA_FOLDER"
+```
+
+List the contents of the data directory as seen by the container:
+```bash
+docker exec doc_chat-processor-1 ls -la /data
+```
+
+Print the current working directory in the container
+```bash
+docker exec doc_chat-processor-1 pwd
+```
+
+Check the environment variables to see what DATA_FOLDER is set to
+```bash
+docker exec doc_chat-processor-1 printenv | findstr DATA_FOLDER
+```
+
+Check if the processor container can read a specific file
+```bash
+docker exec doc_chat-processor-1 cat /data/gdpr_info.txt
+```
+
+
+
+```
+
+
 # docs\llm-comparison.md
 ```markdown
 | Feature | Local Llama (via Ollama) | Mistral AI (French) |
@@ -561,234 +583,6 @@ Benefits:
 | EU-2 | GDPR | GDPR compliant architecture and processes | High | |
 | EU-3 | EU-based Services | EU-based solution components where cloud services are used | High | |
 | EU-4 | Transparency | Transparent pricing and data handling | Medium | |
-
-```
-
-
-# docs\setup_old.md
-```markdown
-# Document Chat System Setup Guide
-
-## Introduction
-
-This guide outlines the setup for a document-based chat system with focus on:
-- European data privacy compliance
-- Easy deployment and testing
-- Handling large document collections
-- Simple prototype-to-production path
-
-After evaluating multiple options across aspects like privacy, maintenance, scalability, and costs, we selected:
-- Weaviate (Dutch) for vector database
-- Mistral AI (French) for LLM services
-- FastAPI for backend
-- Streamlit for prototype frontend (Production on Hetzner)
-
-Key advantages:
-- Full EU data sovereignty
-- Self-hostable components
-- Scalable to hundreds of users
-- Simple Python-based deployment
-- Docker containerization for easy testing
-
-The setup below provides a foundation for local development with path to EU-compliant cloud deployment.
-
-## Project Structure
-```
-doc-chat/
-├── docker-compose.yml
-├── .env
-├── backend/
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   └── routes/
-│   └── data/
-└── frontend/
-    ├── Dockerfile
-    ├── requirements.txt
-    └── app.py
-```
-
-## Technology Stack
-- FastAPI: Backend API
-- Streamlit: Frontend (temporary for prototype)
-- Weaviate: Vector Database
-- Mistral API: LLM Provider
-- Docker: Containerization
-
-## Setup Steps
-
-1. **Environment Setup**
-```bash
-# Create project structure
-mkdir doc-chat && cd doc-chat
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-```
-
-2. **Install Dependencies**
-```bash
-# Backend requirements.txt
-fastapi==0.104.1
-uvicorn==0.24.0
-python-dotenv==1.0.0
-weaviate-client==3.24.1
-httpx==0.25.1
-
-# Frontend requirements.txt
-streamlit==1.28.1
-```
-
-3. **Environment Variables (.env)**
-```
-MISTRAL_API_KEY=your_key_here
-WEAVIATE_URL=http://weaviate:8080
-```
-
-4. **Docker Compose**
-```yaml
-version: '3.8'
-services:
-  weaviate:
-    image: semitechnologies/weaviate:1.21.2
-    ports:
-      - "8080:8080"
-    environment:
-      QUERY_DEFAULTS_LIMIT: 25
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
-      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-    volumes:
-      - weaviate_data:/var/lib/weaviate
-
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      - weaviate
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "8501:8501"
-    env_file:
-      - .env
-    depends_on:
-      - backend
-
-volumes:
-  weaviate_data:
-```
-
-## Initial Code
-
-### Backend (main.py)
-```python
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import weaviate
-import os
-import httpx
-
-app = FastAPI()
-
-# Initialize Weaviate client
-client = weaviate.Client(
-    url=os.getenv("WEAVIATE_URL")
-)
-
-class Query(BaseModel):
-    question: str
-
-@app.post("/chat")
-async def chat_endpoint(query: Query):
-    try:
-        # 1. Search relevant documents
-        result = client.query.get(
-            "Document", ["content"]
-        ).with_near_text({
-            "concepts": [query.question]
-        }).do()
-        
-        # 2. Get context from search results
-        context = result['data']['Get']['Document']
-        
-        # 3. Query Mistral
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.mistral.ai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {os.getenv('MISTRAL_API_KEY')}"},
-                json={
-                    "model": "mistral-tiny",
-                    "messages": [
-                        {"role": "system", "content": "Answer based on the context provided."},
-                        {"role": "user", "content": f"Context: {context}\n\nQuestion: {query.question}"}
-                    ]
-                }
-            )
-        
-        return response.json()
-    except Exception as e:
-        raise HTTPException(status_code=500, str(e))
-```
-
-### Frontend (app.py)
-```python
-import streamlit as st
-import httpx
-
-st.title("Document Chat")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-if prompt := st.chat_input("Ask about your documents"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "http://backend:8000/chat",
-                json={"question": prompt}
-            )
-            response_data = response.json()
-            st.markdown(response_data["choices"][0]["message"]["content"])
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": response_data["choices"][0]["message"]["content"]
-            })
-```
-
-## Running the Project
-
-1. Start services:
-```bash
-docker-compose up --build
-```
-
-2. Access:
-- Frontend: http://localhost:8501
-- Backend API: http://localhost:8000
-- Weaviate Console: http://localhost:8080
-
-## Next Steps
-1. Add document upload functionality
-2. Implement authentication
-3. Add response caching
-4. Improve error handling
-5. Add conversation history
-6. Deploy to EU-based VPS
 
 ```
 
@@ -908,76 +702,133 @@ docker-compose up --build
 
 # docs\todo.md
 ```markdown
-### 4. Docker Compose Configuration
+# EU-Compliant RAG System: Debug & Prototype Todo List
 
-Create a `docker-compose.yml` file in the project root with the following services:
+## Debugging & Testing Priority
+- [ ] Test document ingestion flow with sample text files
+- [ ] Debug document processor watchdog functionality
+- [ ] Verify Weaviate schema creation and vector storage
+- [ ] Test chunk retrieval with various query types
+- [ ] Debug Mistral AI integration and response generation
+- [ ] Test end-to-end flow from document upload to chat response
+- [ ] Add logging to identify failure points
+- [ ] Create simple test cases for each component
 
-- **weaviate**: Vector database
-- **t2v-transformers**: Text embedding service
-- **processor**: Document processor service
-- **api**: FastAPI backend
-- **web**: Web interface (Streamlit for prototype, Nginx for production)
+## Prototype Improvements
+- [ ] Fix any UI issues in the Streamlit interface
+- [ ] Improve error handling and user feedback
+- [ ] Enhance the document chunking strategy
+- [ ] Adjust vector search parameters for better retrieval
+- [ ] Improve prompt engineering for Mistral AI
+- [ ] Add basic document statistics (count, size, etc.)
+- [ ] Create a simple admin view for document management
+- [ ] Add basic chat history persistence
 
-The volumes should include:
-- `./docs:/docs`: For document monitoring
-- `weaviate_data`: Persistent storage for vector database
+## Documentation Updates
+- [ ] Update architecture diagrams to reflect Mistral AI instead of Ollama
+- [ ] Document the current prototype setup and components
+- [ ] Create a simple user guide for the prototype
+- [ ] Document known issues and limitations
+- [ ] Add code comments to explain complex sections
 
-### 5. Document Processor Setup
+## Optional Enhancements (After Stable Prototype)
+- [ ] Add support for basic PDF text extraction
+- [ ] Implement simple metadata for documents
+- [ ] Add response caching to reduce API costs
+- [ ] Create a simple visualization for document relationships
+- [ ] Improve source citation format
+- [ ] Add simple analytics on query performance
 
-The document processor should:
-- Watch the `/data` folder for new or modified text files
-- Process text files by splitting them into chunks
-- Add chunks to Weaviate with appropriate metadata
-- Set up a proper schema in Weaviate
+## Future Considerations (Post-Prototype)
+- [ ] Plan for production web interface 
+- [ ] Consider deployment strategy for scaling
+- [ ] Evaluate additional EU-compliant services
+- [ ] Research performance optimization options
+- [ ] Consider security enhancements needed
+- [ ] Evaluate user feedback mechanisms
 
-### 6. API Service Setup
+## Notes
+- Focus on getting a stable, functioning prototype before adding features
+- Prioritize debugging the core RAG functionality
+- Document issues encountered for future reference
+- Test with realistic document scenarios from intended use case
 
-The API service should:
-- Provide endpoints for querying documents
-- Search Weaviate for relevant content
-- Format retrieved content for Mistral AI
-- Send properly formatted prompts to Mistral AI
-- Return responses with source references
+---
 
-### 7. Web Interface Setup
+# Future Production Roadmap
+*Reference for after prototype is stable*
 
-For the prototype:
-- Build a simple Streamlit chat interface
-- Display conversation history
-- Show source references for answers
+## Completed Items (So Far)
+- ✅ Docker Compose configuration with all required services
+- ✅ Weaviate vector database integration
+- ✅ Document processor with folder watching
+- ✅ Text chunking implementation
+- ✅ FastAPI backend with query endpoints
+- ✅ Mistral AI integration for EU compliance
+- ✅ Streamlit prototype interface
+- ✅ Basic error handling and logging
 
-For production:
-- Create a lightweight HTML/JS interface
-- Set up Nginx to serve static files and proxy API requests
+## High Priority Tasks
 
+### Production Web Interface
+- [ ] Complete the web-production folder implementation
+- [ ] Create HTML/JS frontend with modern UI components
+- [ ] Set up Nginx configuration for static files and API proxying
+- [ ] Implement responsive design for mobile compatibility
+- [ ] Add proper error handling for network issues
 
-## Next Steps
+### Document Management Enhancements
+- [ ] Add support for additional file formats (PDF, DOCX)
+- [ ] Implement better chunking strategies for improved retrieval
+- [ ] Add metadata extraction from documents
+- [ ] Create a document management panel for admins
+- [ ] Implement versioning for document updates
 
-1. **Document Processing Enhancements**:
-   - Add support for other text formats
-   - Improve chunking strategies for better retrieval
-   - Add metadata extraction
+### Deployment & Operations
+- [ ] Create deployment scripts for Hetzner (German cloud provider)
+- [ ] Set up monitoring and alerting
+- [ ] Implement automated backups for Weaviate data
+- [ ] Create system health dashboard
+- [ ] Document production deployment process
 
-2. **User Experience Improvements**:
-   - Enhance source citation format
-   - Add filtering options for documents
-   - Implement conversation memory
+## Medium Priority Tasks
 
-3. **Production Deployment**:
-   - Deploy to Hetzner or another EU-based cloud
-   - Set up monitoring and logging
-   - Implement backup strategy for Weaviate data
+### User Experience Improvements
+- [ ] Enhance source citation format with page numbers
+- [ ] Add filtering options for documents by category/date
+- [ ] Implement conversation memory and history export
+- [ ] Add feedback mechanism for incorrect answers
+- [ ] Create user preference settings (dark mode, etc.)
 
-4. **Performance Optimization**:
-   - Add response caching to reduce Mistral API costs
-   - Optimize chunk size and retrieval parameters
-   - Implement batching for document processing
+### Performance Optimization
+- [ ] Add response caching to reduce Mistral API costs
+- [ ] Optimize chunk size and retrieval parameters
+- [ ] Implement batching for document processing
+- [ ] Add rate limiting and request queuing
+- [ ] Optimize embedding model for Dutch language
 
-5. **Additional Features**:
-   - Add document metadata search
-   - Implement simple analytics on usage
-   - Create admin dashboard for system monitoring
+### Security Enhancements
+- [ ] Add basic authentication for web interface
+- [ ] Implement request validation
+- [ ] Add API key rotation mechanism
+- [ ] Set up proper CORS policies
+- [ ] Add content filtering for document ingestion
 
+## Low Priority / Future Tasks
+
+### Additional Features
+- [ ] Add document metadata search capabilities
+- [ ] Implement simple analytics on usage patterns
+- [ ] Create admin dashboard for system monitoring
+- [ ] Add multi-language support beyond Dutch
+- [ ] Implement "suggested questions" based on document content
+
+### Integration Options
+- [ ] Add email notification functionality
+- [ ] Create webhook support for external systems
+- [ ] Develop a simple plugin system
+- [ ] Add export capabilities for chat logs
+- [ ] Create an embeddable widget for other sites
 ```
 
 
@@ -1002,6 +853,7 @@ import os
 import time
 import logging
 import uuid
+import glob
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import weaviate
@@ -1065,28 +917,38 @@ class TextFileHandler(FileSystemEventHandler):
         """Process a text file and store chunks in Weaviate."""
         logger.info(f"Processing file: {file_path}")
         
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-                logger.info(f"File content length: {len(content)} characters")
-                
-                # Get the filename without the path
-                filename = os.path.basename(file_path)
-                
-                # Delete existing chunks for this file if any
-                self.delete_existing_chunks(filename)
-                
-                # Split the content into chunks
-                chunks = chunk_text(content)
-                logger.info(f"Split into {len(chunks)} chunks")
-                
-                # Store each chunk in Weaviate
-                for i, chunk_content in enumerate(chunks):
-                    self.store_chunk(chunk_content, filename, i)
+        # List of encodings to try
+        encodings = ['utf-8', 'latin1', 'cp1252']
+        
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as file:
+                    content = file.read()
+                    logger.info(f"File content length: {len(content)} characters")
                     
-                logger.info(f"File {filename} processed successfully")
-        except Exception as e:
-            logger.error(f"Error processing file {file_path}: {str(e)}")
+                    # Get the filename without the path
+                    filename = os.path.basename(file_path)
+                    
+                    # Delete existing chunks for this file if any
+                    self.delete_existing_chunks(filename)
+                    
+                    # Split the content into chunks
+                    chunks = chunk_text(content)
+                    logger.info(f"Split into {len(chunks)} chunks")
+                    
+                    # Store each chunk in Weaviate
+                    for i, chunk_content in enumerate(chunks):
+                        self.store_chunk(chunk_content, filename, i)
+                        
+                    logger.info(f"File {filename} processed successfully")
+                    return  # Exit if successful
+            except UnicodeDecodeError:
+                logger.warning(f"Failed to read {file_path} with {encoding} encoding. Trying next encoding...")
+            except Exception as e:
+                logger.error(f"Error processing file {file_path}: {str(e)}")
+                return  # Exit on other errors
+        
+        logger.error(f"Failed to process {file_path} with any of the attempted encodings")
 
     def delete_existing_chunks(self, filename):
         """Delete existing chunks for a file."""
@@ -1123,6 +985,16 @@ class TextFileHandler(FileSystemEventHandler):
             logger.info(f"Stored chunk {chunk_id} from {filename}")
         except Exception as e:
             logger.error(f"Error storing chunk: {str(e)}")
+    
+    def process_existing_files(self, data_folder):
+        """Process all existing text files in the data folder."""
+        logger.info(f"Scanning for existing files in {data_folder}")
+        text_files = glob.glob(os.path.join(data_folder, "*.txt"))
+        logger.info(f"Found {len(text_files)} existing text files")
+        
+        for file_path in text_files:
+            logger.info(f"Processing existing file: {file_path}")
+            self.process_file(file_path)
 
 def setup_weaviate_schema(client):
     """Set up the Weaviate schema for document chunks."""
@@ -1192,7 +1064,7 @@ def main():
         logger.info(f"Connecting to Weaviate at {weaviate_url}")
         client = weaviate.Client(
             weaviate_url,
-            startup_period=60  # Increase this to 60 seconds, since Windows typically has slightly slower file operations through Docker:
+            startup_period=60  # Increase this to 60 seconds to allow more time for Weaviate to start
         )        
         # Check connection
         if client.is_ready():
@@ -1206,6 +1078,12 @@ def main():
             logger.info(f"Starting to watch folder: {data_folder}")
             
             event_handler = TextFileHandler(client)
+            
+            # Process existing files first
+            logger.info("Processing existing files in data folder")
+            event_handler.process_existing_files(data_folder)
+            
+            # Then set up watchdog for future changes
             observer = Observer()
             observer.schedule(event_handler, data_folder, recursive=False)
             observer.start()
@@ -1755,14 +1633,6 @@ httpx==0.25.1
 ```
 
 
-# NOW
-```text
-create project knowledge
-Check what's left in todo
-start debugggggggging
-```
-
-
 # README.md
 ```markdown
 # RAG System with Folder Watching
@@ -2229,6 +2099,21 @@ volumes:
 # start.ps1
 ```powershell
 Write-Host "Starting EU-compliant RAG system..." -ForegroundColor Cyan
+
+# Check if Docker is running first
+try {
+    $dockerStatus = docker info 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Docker is not running. Please start Docker Desktop first." -ForegroundColor Red
+        exit 1
+    } else {
+        Write-Host "Docker is running." -ForegroundColor Green
+    }
+} catch {
+    Write-Host "Error checking Docker status: $_" -ForegroundColor Red
+    Write-Host "Please ensure Docker is installed and running, then try again." -ForegroundColor Red
+    exit 1
+}
 
 # Start Weaviate and text vectorizer
 Write-Host "Starting Weaviate and text vectorizer..." -ForegroundColor Yellow
