@@ -49,8 +49,9 @@ services:
     ports:
       - 8000:8000
     environment:
-      - WEAVIATE_URL=http://weaviate:8080
+      - WEAVIATE_URL=${WEAVIATE_URL}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - MISTRAL_MODEL=${MISTRAL_MODEL}
     depends_on:
       - weaviate
       - t2v-transformers

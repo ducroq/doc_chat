@@ -43,13 +43,11 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-
-app = FastAPI(title="EU-Compliant RAG API")
-
-# Initialize Weaviate client
 weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
 mistral_model = os.getenv("MISTRAL_MODEL", "mistral-tiny")
+
+app = FastAPI(title="EU-Compliant RAG API")
 
 # Initialize Mistral client
 mistral_client = None
