@@ -63,3 +63,7 @@ Write-Host "All services started!" -ForegroundColor Green
 Write-Host "Web interface: http://localhost:8501" -ForegroundColor Cyan
 Write-Host "API documentation: http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host "Weaviate console: http://localhost:8080" -ForegroundColor Cyan
+Write-Host "Document statistics: http://localhost:8000/statistics" -ForegroundColor Cyan
+Write-Host "Processor logs: docker-compose logs -f processor" -ForegroundColor Cyan
+Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Cyan
+

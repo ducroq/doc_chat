@@ -196,6 +196,87 @@ async def count_documents():
         
     except Exception as e:
         logger.error(f"Error counting documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
+@app.get("/statistics")
+async def get_document_statistics():
+    """
+    Get comprehensive statistics about documents in the system.
+    Returns counts, document metadata, and processing information.
+    """
+    if not client:
+        raise HTTPException(status_code=503, detail="Weaviate connection not available")
+    
+    try:
+        # Get the DocumentChunk collection
+        collection = client.collections.get("DocumentChunk")
+        
+        # 1. Get all objects to gather statistics
+        # Limited to 10,000 for practicality - adjust if needed
+        query_result = collection.query.fetch_objects(
+            return_properties=["filename", "chunkId", "content"],
+            limit=10000
+        )
+        
+        if not query_result.objects:
+            return {
+                "document_count": 0,
+                "chunk_count": 0,
+                "message": "No documents found in the system"
+            }
+        
+        # 2. Calculate basic statistics
+        document_chunks = {}
+        total_content_length = 0
+        
+        for obj in query_result.objects:
+            filename = obj.properties["filename"]
+            chunk_id = obj.properties["chunkId"]
+            content = obj.properties["content"]
+            
+            # Track chunks per document
+            if filename not in document_chunks:
+                document_chunks[filename] = []
+            document_chunks[filename].append(chunk_id)
+            
+            # Track total content length
+            total_content_length += len(content)
+        
+        # 3. Prepare document details
+        documents = []
+        for filename, chunks in document_chunks.items():
+            documents.append({
+                "filename": filename,
+                "chunk_count": len(chunks),
+                "first_chunk": min(chunks),
+                "last_chunk": max(chunks)
+            })
+        
+        # Sort documents by filename
+        documents.sort(key=lambda x: x["filename"])
+        
+        # 4. Calculate summary statistics
+        document_count = len(document_chunks)
+        chunk_count = len(query_result.objects)
+        avg_chunks_per_doc = chunk_count / max(document_count, 1)
+        avg_chunk_length = total_content_length / max(chunk_count, 1)
+        
+        # 5. Compile and return the statistics
+        return {
+            "summary": {
+                "document_count": document_count,
+                "chunk_count": chunk_count,
+                "avg_chunks_per_document": round(avg_chunks_per_doc, 2),
+                "avg_chunk_length": round(avg_chunk_length, 2),
+                "total_content_length": total_content_length,
+            },
+            "documents": documents
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving document statistics: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")    
 
 if __name__ == "__main__":
