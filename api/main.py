@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from mistralai import Mistral
 import uuid
 import time
+from collections import deque
 from functools import lru_cache
 import hashlib
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -48,6 +49,7 @@ weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
 mistral_model = os.getenv("MISTRAL_MODEL", "mistral-tiny")
 daily_token_budget = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))  # Default 10k tokens/day
+MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
 
 # Set-up FastAPI app
 app = FastAPI(title="EU-Compliant RAG API")
@@ -56,6 +58,9 @@ token_usage = {
     "count": 0,
     "reset_date": datetime.now().strftime("%Y-%m-%d")
 }
+
+# Configure rate limiting
+request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
 
 def check_token_budget(estimated_tokens):
     """Check if we have enough budget for this request"""
@@ -75,6 +80,22 @@ def update_token_usage(tokens_used):
     """Update the token usage tracker"""
     token_usage["count"] += tokens_used
     logger.info(f"Token usage: {token_usage['count']}/{daily_token_budget} for {token_usage['reset_date']}")
+
+def check_rate_limit():
+    """Check if we're within rate limits"""
+    now = time.time()
+    
+    # Clean old timestamps (older than 1 minute)
+    while request_timestamps and now - request_timestamps[0] > 60:
+        request_timestamps.popleft()
+    
+    # Check if we've hit the limit
+    if len(request_timestamps) >= MAX_REQUESTS_PER_MINUTE:
+        return False
+    
+    # Add current timestamp and allow request
+    request_timestamps.append(now)
+    return True    
 
 # Initialize Mistral client
 mistral_client = None
@@ -170,6 +191,14 @@ async def chat(query: Query):
     request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
     
     logger.info(f"[{request_id}] Chat request received: {query.question[:50] + '...' if len(query.question) > 50 else query.question}")
+
+    # Check rate limit first
+    if not check_rate_limit():
+        return {
+            "answer": "The system is currently processing too many requests. Please try again in a minute.",
+            "sources": [],
+            "error": "rate_limited"
+        }    
 
     if not client:
         logger.error(f"[{request_id}] Weaviate connection not available")
