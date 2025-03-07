@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -46,8 +47,34 @@ load_dotenv()
 weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
 mistral_model = os.getenv("MISTRAL_MODEL", "mistral-tiny")
+daily_token_budget = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))  # Default 10k tokens/day
 
+# Set-up FastAPI app
 app = FastAPI(title="EU-Compliant RAG API")
+
+token_usage = {
+    "count": 0,
+    "reset_date": datetime.now().strftime("%Y-%m-%d")
+}
+
+def check_token_budget(estimated_tokens):
+    """Check if we have enough budget for this request"""
+    # Reset counter if it's a new day
+    today = datetime.now().strftime("%Y-%m-%d")
+    if token_usage["reset_date"] != today:
+        token_usage["count"] = 0
+        token_usage["reset_date"] = today
+        logger.info(f"Token budget reset for new day: {today}")
+    
+    # Check if this request would exceed our budget
+    if token_usage["count"] + estimated_tokens > daily_token_budget:
+        return False
+    return True
+
+def update_token_usage(tokens_used):
+    """Update the token usage tracker"""
+    token_usage["count"] += tokens_used
+    logger.info(f"Token usage: {token_usage['count']}/{daily_token_budget} for {token_usage['reset_date']}")
 
 # Initialize Mistral client
 mistral_client = None
@@ -188,6 +215,19 @@ async def chat(query: Query):
             logger.info(f"[{request_id}] Cache hit! Returning cached response")
             return cached_result
 
+        # Estimate tokens (very roughly - ~4 chars per token)
+        estimated_prompt_tokens = (len(query.question) + len(context)) // 4
+        estimated_response_tokens = 500  # Conservative estimate
+        total_estimated_tokens = estimated_prompt_tokens + estimated_response_tokens
+        
+        # Check if we have budget
+        if not check_token_budget(total_estimated_tokens):
+            return {
+                "answer": "I'm sorry, the daily query limit has been reached to control costs. Please try again tomorrow.",
+                "sources": [],
+                "error": "budget_exceeded"
+            }
+        
         # Log generation attempt
         logger.info(f"[{request_id}] Sending request to Mistral API using model: {mistral_model}")
         
@@ -216,7 +256,17 @@ async def chat(query: Query):
         
         # Log success and timing
         logger.info(f"[{request_id}] Mistral response received in {generation_time:.2f}s")
-        logger.info(f"[{request_id}] Answer length: {len(answer)} characters")        
+        logger.info(f"[{request_id}] Answer length: {len(answer)} characters")     
+
+        # Track actual usage (if available in Mistral response)
+        tokens_used = 0
+        if hasattr(chat_response, 'usage') and chat_response.usage:
+            tokens_used = chat_response.usage.total_tokens
+        else:
+            # Fall back to estimation
+            tokens_used = total_estimated_tokens
+        
+        update_token_usage(tokens_used)           
 
         # Cache the result before returning
         result = {"answer": answer, "sources": sources}
