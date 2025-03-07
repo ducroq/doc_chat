@@ -10,12 +10,31 @@ import uuid
 import time
 from functools import lru_cache
 import hashlib
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 
 # Simple cache for Mistral responses
 @lru_cache(maxsize=100)  # Adjust size as needed
 def get_cached_response(query_hash, model):
     # This function will be automatically cached
     pass
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def call_mistral_with_retry(client, model, messages, temperature):
+    """Call Mistral API with retry logic for transient errors"""
+    try:
+        return client.chat.complete(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
+    except Exception as e:
+        if "rate limit" in str(e).lower() or "timeout" in str(e).lower():
+            logger.warning(f"Temporary error calling Mistral API: {str(e)}. Retrying...")
+            raise  # Will trigger retry
+        else:
+            logger.error(f"Non-transient error calling Mistral API: {str(e)}")
+            raise  # Won't retry for non-transient errors
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -37,7 +56,7 @@ mistral_client = None
 if mistral_api_key:
     try:
         mistral_client = Mistral(api_key=mistral_api_key)
-        logger.info("Mistral client initialized")
+        logger.info("Mistral client initialized, using model: " + mistral_model)
     except Exception as e:
         logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
@@ -125,19 +144,8 @@ async def chat(query: Query):
     """RAG-based chat endpoint that queries documents and generates a response."""
     request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
     
-    logger.info(f"[{request_id}] Chat request received: '{query.question[:50]}...' if len(query.question) > 50 else query.question")
+    logger.info(f"[{request_id}] Chat request received: {query.question[:50] + '...' if len(query.question) > 50 else query.question}")
 
-    # Create a hash of the query and context to use as cache key
-    query_text = query.question.strip().lower()
-    context_hash = hashlib.md5(context.encode()).hexdigest()
-    cache_key = f"{query_text}_{context_hash}"
-    
-    # Check cache first
-    cached_result = get_cached_response(cache_key, mistral_model)
-    if cached_result:
-        logger.info(f"[{request_id}] Cache hit! Returning cached response")
-        return cached_result   
-    
     if not client:
         logger.error(f"[{request_id}] Weaviate connection not available")
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
@@ -171,6 +179,17 @@ async def chat(query: Query):
         context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
         logger.info(f"[{request_id}] Context size: {len(context)} characters")
 
+        # Create a hash of the query and context to use as cache key
+        query_text = query.question.strip().lower()
+        context_hash = hashlib.md5(context.encode()).hexdigest()
+        cache_key = f"{query_text}_{context_hash}"
+        
+        # Check cache first
+        cached_result = get_cached_response(cache_key, mistral_model)
+        if cached_result:
+            logger.info(f"[{request_id}] Cache hit! Returning cached response")
+            return cached_result
+
         # Log generation attempt
         logger.info(f"[{request_id}] Sending request to Mistral API using model: {mistral_model}")
         
@@ -186,7 +205,8 @@ async def chat(query: Query):
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query.question}"}
         ]
         
-        chat_response = mistral_client.chat.complete(
+        chat_response = call_mistral_with_retry(
+            client=mistral_client,
             model=mistral_model,
             messages=messages,
             temperature=0.7,
