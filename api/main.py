@@ -1,67 +1,44 @@
 import os
-from datetime import datetime, timedelta
+import time
+import uuid
 import logging
-from fastapi import FastAPI, HTTPException
+import hashlib
+from datetime import datetime
+from collections import deque
+from functools import lru_cache
+
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from dotenv import load_dotenv
 from mistralai import Mistral
-import uuid
-import time
-from collections import deque
-from functools import lru_cache
-import hashlib
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-
-# Simple cache for Mistral responses
-@lru_cache(maxsize=100)  # Adjust size as needed
-def get_cached_response(query_hash, model):
-    # This function will be automatically cached
-    pass
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def call_mistral_with_retry(client, model, messages, temperature):
-    """Call Mistral API with retry logic for transient errors"""
-    try:
-        return client.chat.complete(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-        )
-    except Exception as e:
-        if "rate limit" in str(e).lower() or "timeout" in str(e).lower():
-            logger.warning(f"Temporary error calling Mistral API: {str(e)}. Retrying...")
-            raise  # Will trigger retry
-        else:
-            logger.error(f"Non-transient error calling Mistral API: {str(e)}")
-            raise  # Won't retry for non-transient errors
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+# Configuration
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Environment variables and settings
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
-DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))  # Default 10k tokens/day
+DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
 
-# Set-up FastAPI app
-app = FastAPI(title="EU-Compliant RAG API")
-
+# Global state tracking
 token_usage = {
     "count": 0,
     "reset_date": datetime.now().strftime("%Y-%m-%d")
 }
-
-# Configure rate limiting
 request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
 
+# Models
+class Query(BaseModel):
+    question: str
+
+# Utility functions
 def check_token_budget(estimated_tokens):
     """Check if we have enough budget for this request"""
     # Reset counter if it's a new day
@@ -95,18 +72,34 @@ def check_rate_limit():
     
     # Add current timestamp and allow request
     request_timestamps.append(now)
-    return True    
+    return True
 
-# Initialize Mistral client
-mistral_client = None
-if MISTRAL_API_KEY:
+# Simple cache for Mistral responses
+@lru_cache(maxsize=100)  # Adjust size as needed
+def get_cached_response(query_hash, model):
+    # This function will be automatically cached
+    pass
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def call_mistral_with_retry(client, model, messages, temperature):
+    """Call Mistral API with retry logic for transient errors"""
     try:
-        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
-        logger.info("Mistral client initialized, using model: " + MISTRAL_MODEL)
+        return client.chat.complete(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
     except Exception as e:
-        logger.error(f"Failed to initialize Mistral client: {str(e)}")
+        if "rate limit" in str(e).lower() or "timeout" in str(e).lower():
+            logger.warning(f"Temporary error calling Mistral API: {str(e)}. Retrying...")
+            raise  # Will trigger retry
+        else:
+            logger.error(f"Non-transient error calling Mistral API: {str(e)}")
+            raise  # Won't retry for non-transient errors
 
-# Create Weaviate client
+# Initialize clients
+# Weaviate client initialization
+client = None
 try:
     # Parse the URL to get components
     use_https = WEAVIATE_URL.startswith("https://")
@@ -135,11 +128,20 @@ try:
     logger.info(f"Connected to Weaviate at {WEAVIATE_URL}")
 except Exception as e:
     logger.error(f"Failed to connect to Weaviate: {str(e)}")
-    client = None
 
-class Query(BaseModel):
-    question: str
+# Mistral client initialization
+mistral_client = None
+if MISTRAL_API_KEY:
+    try:
+        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+        logger.info("Mistral client initialized, using model: " + MISTRAL_MODEL)
+    except Exception as e:
+        logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
+# FastAPI app
+app = FastAPI(title="EU-Compliant RAG API")
+
+# Basic endpoints
 @app.get("/")
 async def root():
     return {"message": "EU-Compliant RAG API is running"}
@@ -155,6 +157,7 @@ async def status():
         "mistral_api": "configured" if mistral_client else "not configured"
     }
 
+# Document search endpoints
 @app.post("/search")
 async def search_documents(query: Query):
     """Search for relevant document chunks without LLM generation."""
@@ -184,7 +187,119 @@ async def search_documents(query: Query):
     except Exception as e:
         logger.error(f"Error in search: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/documents/count")
+async def count_documents():
+    """Count the number of unique documents indexed in the system."""
+    if not client:
+        raise HTTPException(status_code=503, detail="Weaviate connection not available")
     
+    try:
+        # Get the collection
+        collection = client.collections.get("DocumentChunk")
+        
+        # Get all unique filenames
+        query_result = collection.query.fetch_objects(
+            return_properties=["filename"],
+            limit=10000  # Use a reasonably high limit
+        )
+        
+        # Count unique filenames
+        unique_filenames = set()
+        for obj in query_result.objects:
+            unique_filenames.add(obj.properties["filename"])
+        
+        return {
+            "count": len(unique_filenames),
+            "documents": list(unique_filenames)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error counting documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/statistics")
+async def get_document_statistics():
+    """
+    Get comprehensive statistics about documents in the system.
+    Returns counts, document metadata, and processing information.
+    """
+    if not client:
+        raise HTTPException(status_code=503, detail="Weaviate connection not available")
+    
+    try:
+        # Get the DocumentChunk collection
+        collection = client.collections.get("DocumentChunk")
+        
+        # 1. Get all objects to gather statistics
+        # Limited to 10,000 for practicality - adjust if needed
+        query_result = collection.query.fetch_objects(
+            return_properties=["filename", "chunkId", "content"],
+            limit=10000
+        )
+        
+        if not query_result.objects:
+            return {
+                "document_count": 0,
+                "chunk_count": 0,
+                "message": "No documents found in the system"
+            }
+        
+        # 2. Calculate basic statistics
+        document_chunks = {}
+        total_content_length = 0
+        
+        for obj in query_result.objects:
+            filename = obj.properties["filename"]
+            chunk_id = obj.properties["chunkId"]
+            content = obj.properties["content"]
+            
+            # Track chunks per document
+            if filename not in document_chunks:
+                document_chunks[filename] = []
+            document_chunks[filename].append(chunk_id)
+            
+            # Track total content length
+            total_content_length += len(content)
+        
+        # 3. Prepare document details
+        documents = []
+        for filename, chunks in document_chunks.items():
+            documents.append({
+                "filename": filename,
+                "chunk_count": len(chunks),
+                "first_chunk": min(chunks),
+                "last_chunk": max(chunks)
+            })
+        
+        # Sort documents by filename
+        documents.sort(key=lambda x: x["filename"])
+        
+        # 4. Calculate summary statistics
+        document_count = len(document_chunks)
+        chunk_count = len(query_result.objects)
+        avg_chunks_per_doc = chunk_count / max(document_count, 1)
+        avg_chunk_length = total_content_length / max(chunk_count, 1)
+        
+        # 5. Compile and return the statistics
+        return {
+            "summary": {
+                "document_count": document_count,
+                "chunk_count": chunk_count,
+                "avg_chunks_per_document": round(avg_chunks_per_doc, 2),
+                "avg_chunk_length": round(avg_chunk_length, 2),
+                "total_content_length": total_content_length,
+            },
+            "documents": documents
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving document statistics: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")  
+
+# Chat endpoint
 @app.post("/chat")
 async def chat(query: Query):
     """RAG-based chat endpoint that queries documents and generates a response."""
@@ -305,121 +420,10 @@ async def chat(query: Query):
         return result
             
     except Exception as e:
-        logger.error(f"Error in chat: {str(e)}")
+        logger.error(f"[{request_id}] Error in chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
-@app.get("/documents/count")
-async def count_documents():
-    """Count the number of unique documents indexed in the system."""
-    if not client:
-        raise HTTPException(status_code=503, detail="Weaviate connection not available")
-    
-    try:
-        # Get the collection
-        collection = client.collections.get("DocumentChunk")
-        
-        # Get all unique filenames
-        # Note: In Weaviate v4, we need to use the GroupBy feature
-        query_result = collection.query.fetch_objects(
-            return_properties=["filename"],
-            limit=10000  # Use a reasonably high limit
-        )
-        
-        # Count unique filenames
-        unique_filenames = set()
-        for obj in query_result.objects:
-            unique_filenames.add(obj.properties["filename"])
-        
-        return {
-            "count": len(unique_filenames),
-            "documents": list(unique_filenames)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error counting documents: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
-@app.get("/statistics")
-async def get_document_statistics():
-    """
-    Get comprehensive statistics about documents in the system.
-    Returns counts, document metadata, and processing information.
-    """
-    if not client:
-        raise HTTPException(status_code=503, detail="Weaviate connection not available")
-    
-    try:
-        # Get the DocumentChunk collection
-        collection = client.collections.get("DocumentChunk")
-        
-        # 1. Get all objects to gather statistics
-        # Limited to 10,000 for practicality - adjust if needed
-        query_result = collection.query.fetch_objects(
-            return_properties=["filename", "chunkId", "content"],
-            limit=10000
-        )
-        
-        if not query_result.objects:
-            return {
-                "document_count": 0,
-                "chunk_count": 0,
-                "message": "No documents found in the system"
-            }
-        
-        # 2. Calculate basic statistics
-        document_chunks = {}
-        total_content_length = 0
-        
-        for obj in query_result.objects:
-            filename = obj.properties["filename"]
-            chunk_id = obj.properties["chunkId"]
-            content = obj.properties["content"]
-            
-            # Track chunks per document
-            if filename not in document_chunks:
-                document_chunks[filename] = []
-            document_chunks[filename].append(chunk_id)
-            
-            # Track total content length
-            total_content_length += len(content)
-        
-        # 3. Prepare document details
-        documents = []
-        for filename, chunks in document_chunks.items():
-            documents.append({
-                "filename": filename,
-                "chunk_count": len(chunks),
-                "first_chunk": min(chunks),
-                "last_chunk": max(chunks)
-            })
-        
-        # Sort documents by filename
-        documents.sort(key=lambda x: x["filename"])
-        
-        # 4. Calculate summary statistics
-        document_count = len(document_chunks)
-        chunk_count = len(query_result.objects)
-        avg_chunks_per_doc = chunk_count / max(document_count, 1)
-        avg_chunk_length = total_content_length / max(chunk_count, 1)
-        
-        # 5. Compile and return the statistics
-        return {
-            "summary": {
-                "document_count": document_count,
-                "chunk_count": chunk_count,
-                "avg_chunks_per_document": round(avg_chunks_per_doc, 2),
-                "avg_chunk_length": round(avg_chunk_length, 2),
-                "total_content_length": total_content_length,
-            },
-            "documents": documents
-        }
-        
-    except Exception as e:
-        logger.error(f"Error retrieving document statistics: {str(e)}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")    
 
+# Main entry point
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
