@@ -8,6 +8,14 @@ from dotenv import load_dotenv
 from mistralai import Mistral
 import uuid
 import time
+from functools import lru_cache
+import hashlib
+
+# Simple cache for Mistral responses
+@lru_cache(maxsize=100)  # Adjust size as needed
+def get_cached_response(query_hash, model):
+    # This function will be automatically cached
+    pass
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -118,6 +126,17 @@ async def chat(query: Query):
     request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
     
     logger.info(f"[{request_id}] Chat request received: '{query.question[:50]}...' if len(query.question) > 50 else query.question")
+
+    # Create a hash of the query and context to use as cache key
+    query_text = query.question.strip().lower()
+    context_hash = hashlib.md5(context.encode()).hexdigest()
+    cache_key = f"{query_text}_{context_hash}"
+    
+    # Check cache first
+    cached_result = get_cached_response(cache_key, mistral_model)
+    if cached_result:
+        logger.info(f"[{request_id}] Cache hit! Returning cached response")
+        return cached_result   
     
     if not client:
         logger.error(f"[{request_id}] Weaviate connection not available")
@@ -180,11 +199,13 @@ async def chat(query: Query):
         # Log success and timing
         logger.info(f"[{request_id}] Mistral response received in {generation_time:.2f}s")
         logger.info(f"[{request_id}] Answer length: {len(answer)} characters")        
+
+        # Cache the result before returning
+        result = {"answer": answer, "sources": sources}
+        get_cached_response.cache_clear()  # Clear one entry if needed
+        get_cached_response(cache_key, mistral_model)  # Store in cache        
             
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+        return result
             
     except Exception as e:
         logger.error(f"Error in chat: {str(e)}")
