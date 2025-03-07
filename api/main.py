@@ -45,10 +45,10 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
-mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
-mistral_model = os.getenv("MISTRAL_MODEL", "mistral-tiny")
-daily_token_budget = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))  # Default 10k tokens/day
+WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
+DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))  # Default 10k tokens/day
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
 
 # Set-up FastAPI app
@@ -72,14 +72,14 @@ def check_token_budget(estimated_tokens):
         logger.info(f"Token budget reset for new day: {today}")
     
     # Check if this request would exceed our budget
-    if token_usage["count"] + estimated_tokens > daily_token_budget:
+    if token_usage["count"] + estimated_tokens > DAILY_TOKEN_BUDGET:
         return False
     return True
 
 def update_token_usage(tokens_used):
     """Update the token usage tracker"""
     token_usage["count"] += tokens_used
-    logger.info(f"Token usage: {token_usage['count']}/{daily_token_budget} for {token_usage['reset_date']}")
+    logger.info(f"Token usage: {token_usage['count']}/{DAILY_TOKEN_BUDGET} for {token_usage['reset_date']}")
 
 def check_rate_limit():
     """Check if we're within rate limits"""
@@ -99,18 +99,18 @@ def check_rate_limit():
 
 # Initialize Mistral client
 mistral_client = None
-if mistral_api_key:
+if MISTRAL_API_KEY:
     try:
-        mistral_client = Mistral(api_key=mistral_api_key)
-        logger.info("Mistral client initialized, using model: " + mistral_model)
+        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+        logger.info("Mistral client initialized, using model: " + MISTRAL_MODEL)
     except Exception as e:
         logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
 # Create Weaviate client
 try:
     # Parse the URL to get components
-    use_https = weaviate_url.startswith("https://")
-    host_part = weaviate_url.replace("http://", "").replace("https://", "")
+    use_https = WEAVIATE_URL.startswith("https://")
+    host_part = WEAVIATE_URL.replace("http://", "").replace("https://", "")
     
     # Handle port if specified
     if ":" in host_part:
@@ -132,7 +132,7 @@ try:
             timeout=Timeout(init=60, query=30, insert=30)
         )
     )
-    logger.info(f"Connected to Weaviate at {weaviate_url}")
+    logger.info(f"Connected to Weaviate at {WEAVIATE_URL}")
 except Exception as e:
     logger.error(f"Failed to connect to Weaviate: {str(e)}")
     client = None
@@ -239,7 +239,7 @@ async def chat(query: Query):
         cache_key = f"{query_text}_{context_hash}"
         
         # Check cache first
-        cached_result = get_cached_response(cache_key, mistral_model)
+        cached_result = get_cached_response(cache_key, MISTRAL_MODEL)
         if cached_result:
             logger.info(f"[{request_id}] Cache hit! Returning cached response")
             return cached_result
@@ -258,7 +258,7 @@ async def chat(query: Query):
             }
         
         # Log generation attempt
-        logger.info(f"[{request_id}] Sending request to Mistral API using model: {mistral_model}")
+        logger.info(f"[{request_id}] Sending request to Mistral API using model: {MISTRAL_MODEL}")
         
         start_time = time.time()        
 
@@ -274,7 +274,7 @@ async def chat(query: Query):
         
         chat_response = call_mistral_with_retry(
             client=mistral_client,
-            model=mistral_model,
+            model=MISTRAL_MODEL,
             messages=messages,
             temperature=0.7,
         )
@@ -300,7 +300,7 @@ async def chat(query: Query):
         # Cache the result before returning
         result = {"answer": answer, "sources": sources}
         get_cached_response.cache_clear()  # Clear one entry if needed
-        get_cached_response(cache_key, mistral_model)  # Store in cache        
+        get_cached_response(cache_key, MISTRAL_MODEL)  # Store in cache        
             
         return result
             
