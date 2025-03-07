@@ -1,0 +1,46 @@
+sequenceDiagram
+    actor User
+    participant WebUI as Web Interface
+    participant API as API Service
+    participant Cache as Response Cache
+    participant Weaviate as Vector Database
+    participant Embedder as Text2Vec-Transformers
+    participant Mistral as Mistral AI
+
+    User->>WebUI: Submit question
+    WebUI->>API: POST /chat with question
+    
+    API->>API: Generate request ID
+    API->>API: Check rate limits
+    
+    API->>Cache: Check for cached response
+    alt Cache hit
+        Cache-->>API: Return cached response
+        API-->>WebUI: Return response with sources
+        WebUI-->>User: Display answer with sources
+    else Cache miss
+        Cache-->>API: No cached response
+        
+        API->>API: Check token budget
+        
+        API->>Weaviate: Search for relevant chunks
+        Weaviate->>Embedder: Convert query to vector
+        Embedder-->>Weaviate: Return query vector
+        Weaviate->>Weaviate: Perform vector similarity search
+        Weaviate-->>API: Return top matching chunks
+        
+        API->>API: Format chunks as context
+        
+        API->>Mistral: Send prompt with context and question
+        Mistral->>Mistral: Generate response
+        Mistral-->>API: Return generated text
+        
+        API->>API: Format final response with sources
+        API->>API: Track token usage
+        
+        API->>Cache: Store response in cache
+        Cache-->>API: Confirm storage
+        
+        API-->>WebUI: Return response with sources
+        WebUI-->>User: Display answer with sources
+    end

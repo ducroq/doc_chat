@@ -12,6 +12,7 @@ doc_chat/
 │   ├── chat_with_your_data.md
 │   ├── docker_debugging_notes.md
 │   ├── llm-comparison.md
+│   ├── prompt_engineering.md
 │   ├── requirements-table.md
 │   ├── simplified-architecture.svg
 │   ├── todo.md
@@ -28,6 +29,8 @@ doc_chat/
 │   │   ├── quickstart_import.py
 │   │   ├── quickstart_neartext_query.py
 │   │   ├── quickstart_rag.py
+│   ├── direct_weaviate_check.py
+│   ├── document_storage_verification.py
 ├── web-production/
 ├── web-prototype/
 │   ├── Dockerfile
@@ -57,43 +60,229 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 # api\main.py
 ```python
 import os
+import time
+import uuid
 import logging
-from fastapi import FastAPI, HTTPException
+import hashlib
+from datetime import datetime
+from collections import deque
+from functools import lru_cache
+
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from dotenv import load_dotenv
 from mistralai import Mistral
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+# Configuration
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Environment variables and settings
+WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
+DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))
+MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
 
-app = FastAPI(title="EU-Compliant RAG API")
+# Global state tracking
+token_usage = {
+    "count": 0,
+    "reset_date": datetime.now().strftime("%Y-%m-%d")
+}
+request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
+response_cache = {}  # Dictionary to store cached responses
 
-# Initialize Weaviate client
-weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
-mistral_api_key = os.getenv("MISTRAL_API_KEY", "")
-mistral_model = os.getenv("MISTRAL_MODEL", "mistral-tiny")
+# Models
+class Query(BaseModel):
+    question: str
 
-# Initialize Mistral client
-mistral_client = None
-if mistral_api_key:
+# Utility functions
+def check_token_budget(estimated_tokens):
+    """Check if we have enough budget for this request"""
+    # Reset counter if it's a new day
+    today = datetime.now().strftime("%Y-%m-%d")
+    if token_usage["reset_date"] != today:
+        token_usage["count"] = 0
+        token_usage["reset_date"] = today
+        logger.info(f"Token budget reset for new day: {today}")
+    
+    # Check if this request would exceed our budget
+    if token_usage["count"] + estimated_tokens > DAILY_TOKEN_BUDGET:
+        return False
+    return True
+
+def update_token_usage(tokens_used):
+    """Update the token usage tracker"""
+    token_usage["count"] += tokens_used
+    logger.info(f"Token usage: {token_usage['count']}/{DAILY_TOKEN_BUDGET} for {token_usage['reset_date']}")
+
+def check_rate_limit():
+    """Check if we're within rate limits"""
+    now = time.time()
+    
+    # Clean old timestamps (older than 1 minute)
+    while request_timestamps and now - request_timestamps[0] > 60:
+        request_timestamps.popleft()
+    
+    # Check if we've hit the limit
+    if len(request_timestamps) >= MAX_REQUESTS_PER_MINUTE:
+        return False
+    
+    # Add current timestamp and allow request
+    request_timestamps.append(now)
+    return True
+
+# Error handling utilities
+class MistralAPIError(Exception):
+    """Custom exception for Mistral API errors"""
+    def __init__(self, message, error_type=None, is_transient=False):
+        self.message = message
+        self.error_type = error_type
+        self.is_transient = is_transient
+        super().__init__(self.message)
+
+class WeaviateError(Exception):
+    """Custom exception for Weaviate errors"""
+    def __init__(self, message, error_type=None, is_transient=False):
+        self.message = message
+        self.error_type = error_type
+        self.is_transient = is_transient
+        super().__init__(self.message)
+
+def handle_api_error(e, request_id=None):
+    """
+    Handle API errors with appropriate response and logging
+    
+    Args:
+        e: The exception
+        request_id: Request ID for logging
+    
+    Returns:
+        Appropriate error response
+    """
+    log_prefix = f"[{request_id}] " if request_id else ""
+    
+    if isinstance(e, MistralAPIError):
+        error_type = e.error_type or "mistral_api_error"
+        logger.error(f"{log_prefix}Mistral API error: {str(e)}")
+        return {
+            "answer": f"I encountered an issue while generating a response: {str(e)}",
+            "sources": [],
+            "error": error_type
+        }
+    elif isinstance(e, WeaviateError):
+        error_type = e.error_type or "weaviate_error" 
+        logger.error(f"{log_prefix}Weaviate error: {str(e)}")
+        return {
+            "answer": "I encountered an issue while searching the knowledge base.",
+            "sources": [],
+            "error": error_type
+        }
+    else:
+        logger.error(f"{log_prefix}Unexpected error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "answer": "I encountered an unexpected error. Please try again later.",
+            "sources": [],
+            "error": "unexpected_error"
+        }
+def get_cached_response(query_hash, model):
+    """
+    Get a response from cache if it exists
+    
+    Args:
+        query_hash: Hash of the query and context
+        model: Model name used for generation
+    
+    Returns:
+        Cached response or None if not found
+    """
+    cache_key = f"{query_hash}_{model}"
+    cached_item = response_cache.get(cache_key)
+    
+    # If we have a cached item and it's not expired
+    if cached_item:
+        # Check if the cache is still valid (cached for less than 1 hour)
+        cache_time = cached_item.get("timestamp", 0)
+        if time.time() - cache_time < 3600:  # 1 hour cache validity
+            logger.info(f"Cache hit for key: {cache_key[:10]}...")
+            return cached_item.get("response")
+        else:
+            # Cache expired
+            logger.info(f"Cache expired for key: {cache_key[:10]}...")
+            del response_cache[cache_key]
+    
+    return None
+
+def set_cached_response(query_hash, model, response):
+    """
+    Store a response in the cache
+    
+    Args:
+        query_hash: Hash of the query and context
+        model: Model name used for generation
+        response: The response to cache
+    """
+    cache_key = f"{query_hash}_{model}"
+    
+    # Store the response with a timestamp
+    response_cache[cache_key] = {
+        "response": response,
+        "timestamp": time.time()
+    }
+    
+    # Limit cache size to 100 entries
+    if len(response_cache) > 100:
+        # Remove oldest entry (simple approach)
+        oldest_key = None
+        oldest_time = float('inf')
+        
+        for key, data in response_cache.items():
+            if data["timestamp"] < oldest_time:
+                oldest_time = data["timestamp"]
+                oldest_key = key
+        
+        if oldest_key:
+            del response_cache[oldest_key]
+            logger.info(f"Removed oldest cache entry: {oldest_key[:10]}...")
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def call_mistral_with_retry(client, model, messages, temperature):
+    """Call Mistral API with retry logic for transient errors"""
     try:
-        mistral_client = Mistral(api_key=mistral_api_key)
-        logger.info("Mistral client initialized")
+        return client.chat.complete(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+        )
     except Exception as e:
-        logger.error(f"Failed to initialize Mistral client: {str(e)}")
+        error_message = str(e).lower()
+        is_transient = any(term in error_message for term in [
+            "rate limit", "timeout", "connection", "too many requests", 
+            "server error", "503", "502", "504"
+        ])
+        
+        if is_transient:
+            logger.warning(f"Temporary error calling Mistral API: {str(e)}. Retrying...")
+            raise  # Will trigger retry
+        else:
+            error_type = "authentication" if "auth" in error_message else "model_error"
+            raise MistralAPIError(f"Error calling Mistral API: {str(e)}", 
+                                 error_type=error_type, 
+                                 is_transient=False)
 
-# Create Weaviate client
+# Initialize clients
+# Weaviate client initialization
+client = None
 try:
     # Parse the URL to get components
-    use_https = weaviate_url.startswith("https://")
-    host_part = weaviate_url.replace("http://", "").replace("https://", "")
+    use_https = WEAVIATE_URL.startswith("https://")
+    host_part = WEAVIATE_URL.replace("http://", "").replace("https://", "")
     
     # Handle port if specified
     if ":" in host_part:
@@ -115,14 +304,81 @@ try:
             timeout=Timeout(init=60, query=30, insert=30)
         )
     )
-    logger.info(f"Connected to Weaviate at {weaviate_url}")
+    logger.info(f"Connected to Weaviate at {WEAVIATE_URL}")
 except Exception as e:
     logger.error(f"Failed to connect to Weaviate: {str(e)}")
-    client = None
 
-class Query(BaseModel):
-    question: str
+# Mistral client initialization
+mistral_client = None
+if MISTRAL_API_KEY:
+    try:
+        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+        logger.info("Mistral client initialized, using model: " + MISTRAL_MODEL)
+    except Exception as e:
+        logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
+# FastAPI app with lifespan
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events"""
+    # Startup validation
+    logger.info("Performing startup validation...")
+    
+    # Validate Weaviate connection
+    if not client:
+        logger.error("CRITICAL: Weaviate client is not initialized")
+    elif not client.is_ready():
+        logger.error("CRITICAL: Weaviate is not ready")
+    else:
+        # Check if DocumentChunk collection exists
+        try:
+            if client.collections.exists("DocumentChunk"):
+                collection = client.collections.get("DocumentChunk")
+                logger.info(f"Weaviate: DocumentChunk collection exists")
+                
+                # Check if there's any data - using proper Weaviate v4 API
+                try:
+                    # Use count_objects() method which is the correct approach in Weaviate v4
+                    count = collection.count_objects()
+                    logger.info(f"Weaviate: DocumentChunk contains {count} objects")
+                except Exception as e:
+                    logger.warning(f"Could not get document count: {str(e)}")
+            else:
+                logger.warning("Weaviate: DocumentChunk collection does not exist - system may not find any documents")
+        except Exception as e:
+            logger.error(f"Error checking DocumentChunk collection: {str(e)}")
+    
+    # Validate Mistral API connection
+    if not mistral_client:
+        logger.error("CRITICAL: Mistral API client is not initialized")
+    else:
+        # Try a simple test query to validate API key and connectivity
+        try:
+            test_response = mistral_client.chat.complete(
+                model=MISTRAL_MODEL,
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            logger.info(f"Mistral API: Connection successful, using model {MISTRAL_MODEL}")
+        except Exception as e:
+            logger.error(f"CRITICAL: Mistral API test failed: {str(e)}")
+    
+    # Log configuration
+    logger.info(f"Configuration: DAILY_TOKEN_BUDGET={DAILY_TOKEN_BUDGET}, MAX_REQUESTS_PER_MINUTE={MAX_REQUESTS_PER_MINUTE}")
+    logger.info("Startup validation complete")
+    
+    yield  # Here the app runs
+    
+    # Shutdown logic
+    logger.info("Shutting down application...")
+    # Close any open connections, etc.
+
+# Create FastAPI app with lifespan
+app = FastAPI(title="EU-Compliant RAG API", lifespan=lifespan)
+
+# Basic endpoints
 @app.get("/")
 async def root():
     return {"message": "EU-Compliant RAG API is running"}
@@ -138,6 +394,7 @@ async def status():
         "mistral_api": "configured" if mistral_client else "not configured"
     }
 
+# Document search endpoints
 @app.post("/search")
 async def search_documents(query: Query):
     """Search for relevant document chunks without LLM generation."""
@@ -147,15 +404,16 @@ async def search_documents(query: Query):
     try:
         # Search Weaviate for relevant chunks
         collection = client.collections.get("DocumentChunk")
-        response = collection.query.near_text(
+        
+        search_result = collection.query.near_text(
             query=query.question,
             limit=5,
             return_properties=["content", "filename", "chunkId"]
-        ).do()
+        )
         
         # Format results
         results = []
-        for obj in response.objects:
+        for obj in search_result.objects:
             results.append(obj.properties)
         
         return {
@@ -167,13 +425,139 @@ async def search_documents(query: Query):
         logger.error(f"Error in search: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/chat")
-async def chat(query: Query):
-    """RAG-based chat endpoint that queries documents and generates a response."""
+@app.get("/documents/count")
+async def count_documents():
+    """Count the number of unique documents indexed in the system."""
     if not client:
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
     
+    try:
+        # Get the collection
+        collection = client.collections.get("DocumentChunk")
+        
+        # Get all unique filenames
+        query_result = collection.query.fetch_objects(
+            return_properties=["filename"],
+            limit=10000  # Use a reasonably high limit
+        )
+        
+        # Count unique filenames
+        unique_filenames = set()
+        for obj in query_result.objects:
+            unique_filenames.add(obj.properties["filename"])
+        
+        return {
+            "count": len(unique_filenames),
+            "documents": list(unique_filenames)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error counting documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/statistics")
+async def get_document_statistics():
+    """
+    Get comprehensive statistics about documents in the system.
+    Returns counts, document metadata, and processing information.
+    """
+    if not client:
+        raise HTTPException(status_code=503, detail="Weaviate connection not available")
+    
+    try:
+        # Get the DocumentChunk collection
+        collection = client.collections.get("DocumentChunk")
+        
+        # 1. Get all objects to gather statistics
+        # Limited to 10,000 for practicality - adjust if needed
+        query_result = collection.query.fetch_objects(
+            return_properties=["filename", "chunkId", "content"],
+            limit=10000
+        )
+        
+        if not query_result.objects:
+            return {
+                "document_count": 0,
+                "chunk_count": 0,
+                "message": "No documents found in the system"
+            }
+        
+        # 2. Calculate basic statistics
+        document_chunks = {}
+        total_content_length = 0
+        
+        for obj in query_result.objects:
+            filename = obj.properties["filename"]
+            chunk_id = obj.properties["chunkId"]
+            content = obj.properties["content"]
+            
+            # Track chunks per document
+            if filename not in document_chunks:
+                document_chunks[filename] = []
+            document_chunks[filename].append(chunk_id)
+            
+            # Track total content length
+            total_content_length += len(content)
+        
+        # 3. Prepare document details
+        documents = []
+        for filename, chunks in document_chunks.items():
+            documents.append({
+                "filename": filename,
+                "chunk_count": len(chunks),
+                "first_chunk": min(chunks),
+                "last_chunk": max(chunks)
+            })
+        
+        # Sort documents by filename
+        documents.sort(key=lambda x: x["filename"])
+        
+        # 4. Calculate summary statistics
+        document_count = len(document_chunks)
+        chunk_count = len(query_result.objects)
+        avg_chunks_per_doc = chunk_count / max(document_count, 1)
+        avg_chunk_length = total_content_length / max(chunk_count, 1)
+        
+        # 5. Compile and return the statistics
+        return {
+            "summary": {
+                "document_count": document_count,
+                "chunk_count": chunk_count,
+                "avg_chunks_per_document": round(avg_chunks_per_doc, 2),
+                "avg_chunk_length": round(avg_chunk_length, 2),
+                "total_content_length": total_content_length,
+            },
+            "documents": documents
+        }
+        
+    except Exception as e:
+        logger.error(f"Error retrieving document statistics: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")  
+
+# Chat endpoint
+@app.post("/chat")
+async def chat(query: Query):
+    """RAG-based chat endpoint that queries documents and generates a response."""
+    request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
+    
+    logger.info(f"[{request_id}] Chat request received: {query.question[:50] + '...' if len(query.question) > 50 else query.question}")
+
+    # Check rate limit first
+    if not check_rate_limit():
+        return {
+            "answer": "The system is currently processing too many requests. Please try again in a minute.",
+            "sources": [],
+            "error": "rate_limited"
+        }    
+
+    if not client:
+        logger.error(f"[{request_id}] Weaviate connection not available")
+        raise HTTPException(status_code=503, detail="Weaviate connection not available")
+    
     if not mistral_client:
+        logger.error(f"[{request_id}] Mistral API client not configured")
         raise HTTPException(status_code=503, detail="Mistral API client not configured")
     
     try:
@@ -194,9 +578,42 @@ async def chat(query: Query):
                 "sources": []
             }
         
+        # Log search results
+        logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")        
+        
         # Format context from chunks
         context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
+        logger.info(f"[{request_id}] Context size: {len(context)} characters")
+
+        # Create a hash of the query and context to use as cache key
+        query_text = query.question.strip().lower()
+        context_hash = hashlib.md5(context.encode()).hexdigest()
+        cache_key = f"{query_text}_{context_hash}"
         
+        # Check cache first
+        cached_result = get_cached_response(cache_key, MISTRAL_MODEL)
+        if cached_result:
+            logger.info(f"[{request_id}] Cache hit! Returning cached response")
+            return cached_result
+
+        # Estimate tokens (very roughly - ~4 chars per token)
+        estimated_prompt_tokens = (len(query.question) + len(context)) // 4
+        estimated_response_tokens = 500  # Conservative estimate
+        total_estimated_tokens = estimated_prompt_tokens + estimated_response_tokens
+        
+        # Check if we have budget
+        if not check_token_budget(total_estimated_tokens):
+            return {
+                "answer": "I'm sorry, the daily query limit has been reached to control costs. Please try again tomorrow.",
+                "sources": [],
+                "error": "budget_exceeded"
+            }
+        
+        # Log generation attempt
+        logger.info(f"[{request_id}] Sending request to Mistral API using model: {MISTRAL_MODEL}")
+        
+        start_time = time.time()        
+
         # Format sources for citation
         sources = [{"filename": obj.properties["filename"], "chunkId": obj.properties["chunkId"]} 
                    for obj in search_result.objects]
@@ -207,27 +624,44 @@ async def chat(query: Query):
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query.question}"}
         ]
         
-        chat_response = mistral_client.chat.complete(
-            model=mistral_model,
+        chat_response = call_mistral_with_retry(
+            client=mistral_client,
+            model=MISTRAL_MODEL,
             messages=messages,
             temperature=0.7,
         )
         
         answer = chat_response.choices[0].message.content
+
+        generation_time = time.time() - start_time
+        
+        # Log success and timing
+        logger.info(f"[{request_id}] Mistral response received in {generation_time:.2f}s")
+        logger.info(f"[{request_id}] Answer length: {len(answer)} characters")     
+
+        # Track actual usage (if available in Mistral response)
+        tokens_used = 0
+        if hasattr(chat_response, 'usage') and chat_response.usage:
+            tokens_used = chat_response.usage.total_tokens
+        else:
+            # Fall back to estimation
+            tokens_used = total_estimated_tokens
+        
+        update_token_usage(tokens_used)           
+
+        # Cache the result before returning
+        result = {"answer": answer, "sources": sources}
+        set_cached_response(cache_key, MISTRAL_MODEL, result)
             
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+        return result
             
     except Exception as e:
-        logger.error(f"Error in chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        return handle_api_error(e, request_id)
 
+# Main entry point
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
 ```
 
 
@@ -238,6 +672,7 @@ uvicorn==0.34.0
 python-dotenv==1.0.1
 weaviate-client==4.11.1
 mistralai==1.5.0
+tenacity==8.0.1
 ```
 
 
@@ -581,6 +1016,17 @@ docker exec doc_chat-processor-1 cat /data/gdpr_info.txt
 ```
 
 
+# docs\prompt_engineering.md
+```markdown
+
+
+Improve the prompt engineering for Mistral AI:
+
+Refine the system prompt in the chat endpoint
+Adjust temperature and other generation parameters
+```
+
+
 # docs\requirements-table.md
 ```markdown
 | Requirement ID | Category | Description | Priority | Notes |
@@ -752,48 +1198,8 @@ docker exec doc_chat-processor-1 cat /data/gdpr_info.txt
 
 # docs\todo.md
 ```markdown
-
-
-
-Verify the data storage:
-
-Use the API to query for stored documents
-Check if vector embeddings are being created correctly
-
-
-Complete end-to-end testing:
-
-Test document upload → processing → querying → response generation
-Test with various document types and query formats
-
-
-Improve the prompt engineering for Mistral AI:
-
-Refine the system prompt in the chat endpoint
-Adjust temperature and other generation parameters
-
-
-Add basic document statistics:
-
-Implement an API endpoint to show document counts, total chunks, etc.
-
-
-
-Would you like me to provide specific code implementations for any of these areas? I can help with debugging the processor, improving the chunking strategy, or enhancing the API endpoints.
-
-# EU-Compliant RAG System: Debug & Prototype Todo List
-
-## Debugging & Testing Priority
-- [ ] Test document ingestion flow with sample text files
-- [ ] Debug document processor watchdog functionality
-- [ ] Verify Weaviate schema creation and vector storage
-- [ ] Test chunk retrieval with various query types
-- [ ] Debug Mistral AI integration and response generation
-- [ ] Test end-to-end flow from document upload to chat response
-- [ ] Add logging to identify failure points
-- [ ] Create simple test cases for each component
-
 ## Prototype Improvements
+- [ ] Improve chunking strategy
 - [ ] Fix any UI issues in the Streamlit interface
 - [ ] Improve error handling and user feedback
 - [ ] Enhance the document chunking strategy
@@ -817,35 +1223,6 @@ Would you like me to provide specific code implementations for any of these area
 - [ ] Create a simple visualization for document relationships
 - [ ] Improve source citation format
 - [ ] Add simple analytics on query performance
-
-## Future Considerations (Post-Prototype)
-- [ ] Plan for production web interface 
-- [ ] Consider deployment strategy for scaling
-- [ ] Evaluate additional EU-compliant services
-- [ ] Research performance optimization options
-- [ ] Consider security enhancements needed
-- [ ] Evaluate user feedback mechanisms
-
-## Notes
-- Focus on getting a stable, functioning prototype before adding features
-- Prioritize debugging the core RAG functionality
-- Document issues encountered for future reference
-- Test with realistic document scenarios from intended use case
-
----
-
-# Future Production Roadmap
-*Reference for after prototype is stable*
-
-## Completed Items (So Far)
-- ✅ Docker Compose configuration with all required services
-- ✅ Weaviate vector database integration
-- ✅ Document processor with folder watching
-- ✅ Text chunking implementation
-- ✅ FastAPI backend with query endpoints
-- ✅ Mistral AI integration for EU compliance
-- ✅ Streamlit prototype interface
-- ✅ Basic error handling and logging
 
 ## High Priority Tasks
 
@@ -2225,6 +2602,293 @@ client.close()  # Free up resources
 ```
 
 
+# tests\direct_weaviate_check.py
+```python
+import weaviate
+import os
+from dotenv import load_dotenv
+
+# Load environment variables (if you have a .env file)
+load_dotenv()
+
+def check_weaviate_storage():
+    """Check Weaviate directly to see if documents and embeddings are stored correctly"""
+    print("🔍 Checking Weaviate storage directly...")
+    
+    try:
+        # Connect to Weaviate
+        client = weaviate.connect_to_local(port=8080)
+        
+        # Check if the client is ready
+        if not client.is_ready():
+            print("❌ Weaviate is not ready.")
+            return
+        
+        print("✅ Connected to Weaviate successfully.")
+        
+        # Get collection info
+        if not client.collections.exists("DocumentChunk"):
+            print("❌ DocumentChunk collection does not exist.")
+            return
+        
+        collection = client.collections.get("DocumentChunk")
+        
+        # Get collection stats
+        print("\n1️⃣ Collection information:")
+        try:
+            objects_count = collection.aggregate.over_all().with_meta_count().do()
+            print(f"Total stored chunks: {objects_count.total_count}")
+        except Exception as e:
+            print(f"Error getting aggregation: {str(e)}")
+        
+        # Get unique filenames
+        print("\n2️⃣ Unique documents:")
+        try:
+            result = collection.query.fetch_objects(
+                return_properties=["filename"],
+                limit=1000  # Adjust as needed
+            )
+            
+            unique_filenames = set()
+            for obj in result.objects:
+                unique_filenames.add(obj.properties["filename"])
+            
+            print(f"Number of unique documents: {len(unique_filenames)}")
+            for filename in unique_filenames:
+                print(f"- {filename}")
+        except Exception as e:
+            print(f"Error getting unique filenames: {str(e)}")
+        
+        # Check embedding vectors - get a sample
+        print("\n3️⃣ Checking sample vectors:")
+        try:
+            # We'll get a sample chunk to check its vector
+            sample = collection.query.fetch_objects(
+                return_properties=["content", "filename", "chunkId"],
+                include_vector=True,
+                limit=1
+            )
+            
+            if sample.objects:
+                obj = sample.objects[0]
+                vector = obj.vector
+                
+                print(f"Sample from: {obj.properties['filename']} (Chunk {obj.properties['chunkId']})")
+                
+                if vector:
+                    vector_length = len(vector)
+                    print(f"Vector exists with dimension: {vector_length}")
+                    print(f"Vector sample (first 5 elements): {vector[:5]}")
+                else:
+                    print("❌ No vector found for this object.")
+            else:
+                print("No objects found in the collection.")
+        except Exception as e:
+            print(f"Error checking vectors: {str(e)}")
+        
+        # Test a simple nearest search
+        print("\n4️⃣ Testing nearest neighbor search:")
+        try:
+            search_term = "RAG system architecture"
+            print(f"Searching for: '{search_term}'")
+            
+            results = collection.query.near_text(
+                query=search_term,
+                limit=3,
+                return_properties=["content", "filename", "chunkId"]
+            )
+            
+            print(f"Found {len(results.objects)} results")
+            for i, obj in enumerate(results.objects):
+                print(f"\nResult {i+1}: {obj.properties['filename']} (Chunk {obj.properties['chunkId']})")
+                # Truncate content for display
+                content = obj.properties['content']
+                if len(content) > 100:
+                    content = content[:97] + "..."
+                print(f"  {content}")
+                
+        except Exception as e:
+            print(f"Error performing search: {str(e)}")
+        
+        print("\n✅ Weaviate check completed!")
+        
+    except Exception as e:
+        print(f"❌ Error connecting to Weaviate: {str(e)}")
+    finally:
+        if 'client' in locals():
+            client.close()
+
+if __name__ == "__main__":
+    check_weaviate_storage()
+```
+
+
+# tests\document_storage_verification.py
+```python
+import requests
+import json
+import time
+from typing import Dict, List, Any
+
+API_URL = "http://localhost:8000"  # Update if using a different address
+
+def check_system_status() -> Dict[str, str]:
+    """Check if all system components are running correctly"""
+    try:
+        response = requests.get(f"{API_URL}/status")
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+def count_indexed_documents() -> int:
+    """Count how many unique documents are indexed in the system"""
+    # This is a demonstration - you'd need to add an endpoint 
+    # to your API that provides this information
+    try:
+        response = requests.get(f"{API_URL}/documents/count")
+        response.raise_for_status()
+        return response.json().get("count", 0)
+    except Exception:
+        return -1  # Indicates error or endpoint doesn't exist
+
+def test_vector_search(query: str) -> Dict[str, Any]:
+    """Test vector search functionality with a specific query"""
+    try:
+        response = requests.post(
+            f"{API_URL}/search",
+            json={"question": query},
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+def test_semantic_relationships(queries: List[str]) -> Dict[str, List]:
+    """
+    Test if semantically related queries return overlapping results,
+    which indicates good vector embedding quality
+    """
+    results = {}
+    all_filenames = set()
+    
+    for query in queries:
+        search_result = test_vector_search(query)
+        if "error" in search_result:
+            results[query] = {"error": search_result["error"]}
+            continue
+            
+        filenames = [obj.get("filename") for obj in search_result.get("results", [])]
+        results[query] = filenames
+        all_filenames.update(filenames)
+    
+    # Calculate overlap between results
+    overlap_results = {}
+    for i, query1 in enumerate(queries):
+        overlaps = {}
+        for j, query2 in enumerate(queries):
+            if i != j:
+                set1 = set(results[query1])
+                set2 = set(results[query2])
+                if set1 and set2:  # Ensure non-empty sets
+                    overlap = len(set1.intersection(set2)) / len(set1.union(set2))
+                    overlaps[query2] = f"{overlap:.2f}"
+        overlap_results[query1] = overlaps
+    
+    return {
+        "individual_results": results,
+        "unique_documents": list(all_filenames),
+        "semantic_overlaps": overlap_results
+    }
+
+def test_rag_quality(query: str) -> Dict[str, Any]:
+    """Test RAG generation quality with a specific query"""
+    try:
+        response = requests.post(
+            f"{API_URL}/chat",
+            json={"question": query},
+            timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+def run_verification_tests():
+    """Run a comprehensive set of verification tests"""
+    print("🔍 Running verification tests for EU-compliant RAG system...")
+    
+    # Step 1: Check if all components are running
+    print("\n1️⃣  Checking system status...")
+    status = check_system_status()
+    print(json.dumps(status, indent=2))
+    
+    if "api" not in status or status["api"] != "running":
+        print("❌ API is not running. Verification cannot continue.")
+        return
+    
+    # Step 2: Check document storage
+    print("\n2️⃣  Testing vector search...")
+    test_queries = [
+        "What is gdpr?"
+    ]
+    
+    for query in test_queries:
+        print(f"\nQuery: '{query}'")
+        result = test_vector_search(query)
+        
+        if "error" in result:
+            print(f"❌ Error: {result['error']}")
+            continue
+            
+        print(f"Found {len(result.get('results', []))} relevant chunks")
+        for i, chunk in enumerate(result.get("results", [])[:2]):  # Show first 2 results
+            print(f"Result {i+1}: {chunk.get('filename')} (Chunk {chunk.get('chunkId')})")
+            # Truncate content for display
+            content = chunk.get("content", "")
+            if len(content) > 100:
+                content = content[:97] + "..."
+            print(f"  {content}")
+    
+    # Step 3: Test semantic relationships
+    print("\n3️⃣  Testing semantic relationships...")
+    semantic_queries = [
+        "EU data regulations",
+        "GDPR compliance",
+        "European privacy laws",
+        "Document processing", # Unrelated query for contrast
+    ]
+    
+    semantic_results = test_semantic_relationships(semantic_queries)
+    print("\nSemantic overlaps between queries (0.00 to 1.00):")
+    for query, overlaps in semantic_results["semantic_overlaps"].items():
+        print(f"Query: '{query}'")
+        for other_query, score in overlaps.items():
+            print(f"  - Overlap with '{other_query}': {score}")
+    
+    # Step 4: Test RAG generation
+    print("\n4️⃣  Testing RAG generation...")
+    rag_query = "What is the GDPR?"
+    rag_result = test_rag_quality(rag_query)
+    
+    if "error" in rag_result:
+        print(f"❌ Error: {rag_result['error']}")
+    else:
+        print(f"Query: '{rag_query}'")
+        print("\nGenerated answer:")
+        print(rag_result.get("answer", "No answer generated"))
+        print("\nSources:")
+        for source in rag_result.get("sources", []):
+            print(f"- {source.get('filename')} (Chunk {source.get('chunkId')})")
+    
+    print("\n✅ Verification tests completed!")
+
+if __name__ == "__main__":
+    run_verification_tests()
+```
+
+
 # web-prototype\Dockerfile
 ```text
 FROM python:3.9-slim
@@ -3023,8 +3687,12 @@ services:
     ports:
       - 8000:8000
     environment:
-      - WEAVIATE_URL=http://weaviate:8080
+      - WEAVIATE_URL=${WEAVIATE_URL}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - MISTRAL_MODEL=${MISTRAL_MODEL}
+      - MISTRAL_DAILY_TOKEN_BUDGET=${MISTRAL_DAILY_TOKEN_BUDGET}
+      - MISTRAL_MAX_REQUESTS_PER_MINUTE=${MISTRAL_MAX_REQUESTS_PER_MINUTE}
+      - MISTRAL_MAX_TOKENS_PER_REQUEST=${MISTRAL_MAX_TOKENS_PER_REQUEST}
     depends_on:
       - weaviate
       - t2v-transformers
@@ -3111,5 +3779,10 @@ Write-Host "All services started!" -ForegroundColor Green
 Write-Host "Web interface: http://localhost:8501" -ForegroundColor Cyan
 Write-Host "API documentation: http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host "Weaviate console: http://localhost:8080" -ForegroundColor Cyan
+Write-Host "Document statistics: http://localhost:8000/statistics" -ForegroundColor Cyan
+Write-Host "Processor logs: docker-compose logs -f processor" -ForegroundColor Cyan
+Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Cyan
+
+
 ```
 

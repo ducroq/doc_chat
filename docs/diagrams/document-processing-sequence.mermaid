@@ -1,0 +1,35 @@
+sequenceDiagram
+    actor Admin
+    participant Folder as Watched Folder
+    participant Processor as Document Processor
+    participant Chunker as Text Chunker
+    participant Weaviate as Vector Database
+    participant Embedder as Text2Vec-Transformers
+    
+    Admin->>Folder: Add/modify .txt file
+    Folder-->>Processor: File change event
+    
+    Processor->>Processor: Validate file & detect encoding
+    
+    Processor->>Folder: Read file content
+    Folder-->>Processor: Return text content
+    
+    Processor->>Weaviate: Delete existing chunks (if any)
+    Weaviate-->>Processor: Confirm deletion
+    
+    Processor->>Chunker: Send text for chunking
+    Chunker->>Chunker: Split text with overlap
+    Chunker-->>Processor: Return text chunks
+    
+    loop For each chunk
+        Processor->>Weaviate: Store chunk with metadata
+        Weaviate->>Embedder: Request vector embedding
+        Embedder->>Embedder: Generate embedding
+        Embedder-->>Weaviate: Return vector embedding
+        Weaviate->>Weaviate: Index chunk with vector
+        Weaviate-->>Processor: Confirm storage
+    end
+    
+    Processor->>Processor: Update processing tracker
+    
+    Note over Processor,Weaviate: Document is now searchable
