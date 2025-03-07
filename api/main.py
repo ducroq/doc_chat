@@ -75,7 +75,61 @@ def check_rate_limit():
     request_timestamps.append(now)
     return True
 
-# Cache management functions
+# Error handling utilities
+class MistralAPIError(Exception):
+    """Custom exception for Mistral API errors"""
+    def __init__(self, message, error_type=None, is_transient=False):
+        self.message = message
+        self.error_type = error_type
+        self.is_transient = is_transient
+        super().__init__(self.message)
+
+class WeaviateError(Exception):
+    """Custom exception for Weaviate errors"""
+    def __init__(self, message, error_type=None, is_transient=False):
+        self.message = message
+        self.error_type = error_type
+        self.is_transient = is_transient
+        super().__init__(self.message)
+
+def handle_api_error(e, request_id=None):
+    """
+    Handle API errors with appropriate response and logging
+    
+    Args:
+        e: The exception
+        request_id: Request ID for logging
+    
+    Returns:
+        Appropriate error response
+    """
+    log_prefix = f"[{request_id}] " if request_id else ""
+    
+    if isinstance(e, MistralAPIError):
+        error_type = e.error_type or "mistral_api_error"
+        logger.error(f"{log_prefix}Mistral API error: {str(e)}")
+        return {
+            "answer": f"I encountered an issue while generating a response: {str(e)}",
+            "sources": [],
+            "error": error_type
+        }
+    elif isinstance(e, WeaviateError):
+        error_type = e.error_type or "weaviate_error" 
+        logger.error(f"{log_prefix}Weaviate error: {str(e)}")
+        return {
+            "answer": "I encountered an issue while searching the knowledge base.",
+            "sources": [],
+            "error": error_type
+        }
+    else:
+        logger.error(f"{log_prefix}Unexpected error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "answer": "I encountered an unexpected error. Please try again later.",
+            "sources": [],
+            "error": "unexpected_error"
+        }
 def get_cached_response(query_hash, model):
     """
     Get a response from cache if it exists
@@ -146,12 +200,20 @@ def call_mistral_with_retry(client, model, messages, temperature):
             temperature=temperature,
         )
     except Exception as e:
-        if "rate limit" in str(e).lower() or "timeout" in str(e).lower():
+        error_message = str(e).lower()
+        is_transient = any(term in error_message for term in [
+            "rate limit", "timeout", "connection", "too many requests", 
+            "server error", "503", "502", "504"
+        ])
+        
+        if is_transient:
             logger.warning(f"Temporary error calling Mistral API: {str(e)}. Retrying...")
             raise  # Will trigger retry
         else:
-            logger.error(f"Non-transient error calling Mistral API: {str(e)}")
-            raise  # Won't retry for non-transient errors
+            error_type = "authentication" if "auth" in error_message else "model_error"
+            raise MistralAPIError(f"Error calling Mistral API: {str(e)}", 
+                                 error_type=error_type, 
+                                 is_transient=False)
 
 # Initialize clients
 # Weaviate client initialization
@@ -194,8 +256,66 @@ if MISTRAL_API_KEY:
     except Exception as e:
         logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
-# FastAPI app
-app = FastAPI(title="EU-Compliant RAG API")
+# FastAPI app with lifespan
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events"""
+    # Startup validation
+    logger.info("Performing startup validation...")
+    
+    # Validate Weaviate connection
+    if not client:
+        logger.error("CRITICAL: Weaviate client is not initialized")
+    elif not client.is_ready():
+        logger.error("CRITICAL: Weaviate is not ready")
+    else:
+        # Check if DocumentChunk collection exists
+        try:
+            if client.collections.exists("DocumentChunk"):
+                collection = client.collections.get("DocumentChunk")
+                logger.info(f"Weaviate: DocumentChunk collection exists")
+                
+                # Check if there's any data - using proper Weaviate v4 API
+                try:
+                    # Use count_objects() method which is the correct approach in Weaviate v4
+                    count = collection.count_objects()
+                    logger.info(f"Weaviate: DocumentChunk contains {count} objects")
+                except Exception as e:
+                    logger.warning(f"Could not get document count: {str(e)}")
+            else:
+                logger.warning("Weaviate: DocumentChunk collection does not exist - system may not find any documents")
+        except Exception as e:
+            logger.error(f"Error checking DocumentChunk collection: {str(e)}")
+    
+    # Validate Mistral API connection
+    if not mistral_client:
+        logger.error("CRITICAL: Mistral API client is not initialized")
+    else:
+        # Try a simple test query to validate API key and connectivity
+        try:
+            test_response = mistral_client.chat.complete(
+                model=MISTRAL_MODEL,
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            logger.info(f"Mistral API: Connection successful, using model {MISTRAL_MODEL}")
+        except Exception as e:
+            logger.error(f"CRITICAL: Mistral API test failed: {str(e)}")
+    
+    # Log configuration
+    logger.info(f"Configuration: DAILY_TOKEN_BUDGET={DAILY_TOKEN_BUDGET}, MAX_REQUESTS_PER_MINUTE={MAX_REQUESTS_PER_MINUTE}")
+    logger.info("Startup validation complete")
+    
+    yield  # Here the app runs
+    
+    # Shutdown logic
+    logger.info("Shutting down application...")
+    # Close any open connections, etc.
+
+# Create FastAPI app with lifespan
+app = FastAPI(title="EU-Compliant RAG API", lifespan=lifespan)
 
 # Basic endpoints
 @app.get("/")
@@ -475,8 +595,7 @@ async def chat(query: Query):
         return result
             
     except Exception as e:
-        logger.error(f"[{request_id}] Error in chat: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        return handle_api_error(e, request_id)
 
 # Main entry point
 if __name__ == "__main__":
