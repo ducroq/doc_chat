@@ -89,15 +89,16 @@ async def search_documents(query: Query):
     try:
         # Search Weaviate for relevant chunks
         collection = client.collections.get("DocumentChunk")
-        response = collection.query.near_text(
+        
+        search_result = collection.query.near_text(
             query=query.question,
             limit=5,
             return_properties=["content", "filename", "chunkId"]
-        ).do()
+        )
         
         # Format results
         results = []
-        for obj in response.objects:
+        for obj in search_result.objects:
             results.append(obj.properties)
         
         return {
@@ -108,7 +109,7 @@ async def search_documents(query: Query):
     except Exception as e:
         logger.error(f"Error in search: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
+    
 @app.post("/chat")
 async def chat(query: Query):
     """RAG-based chat endpoint that queries documents and generates a response."""
@@ -165,6 +166,37 @@ async def chat(query: Query):
     except Exception as e:
         logger.error(f"Error in chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
+@app.get("/documents/count")
+async def count_documents():
+    """Count the number of unique documents indexed in the system."""
+    if not client:
+        raise HTTPException(status_code=503, detail="Weaviate connection not available")
+    
+    try:
+        # Get the collection
+        collection = client.collections.get("DocumentChunk")
+        
+        # Get all unique filenames
+        # Note: In Weaviate v4, we need to use the GroupBy feature
+        query_result = collection.query.fetch_objects(
+            return_properties=["filename"],
+            limit=10000  # Use a reasonably high limit
+        )
+        
+        # Count unique filenames
+        unique_filenames = set()
+        for obj in query_result.objects:
+            unique_filenames.add(obj.properties["filename"])
+        
+        return {
+            "count": len(unique_filenames),
+            "documents": list(unique_filenames)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error counting documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")    
 
 if __name__ == "__main__":
     import uvicorn
