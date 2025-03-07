@@ -6,6 +6,8 @@ import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from dotenv import load_dotenv
 from mistralai import Mistral
+import uuid
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -113,10 +115,16 @@ async def search_documents(query: Query):
 @app.post("/chat")
 async def chat(query: Query):
     """RAG-based chat endpoint that queries documents and generates a response."""
+    request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
+    
+    logger.info(f"[{request_id}] Chat request received: '{query.question[:50]}...' if len(query.question) > 50 else query.question")
+    
     if not client:
+        logger.error(f"[{request_id}] Weaviate connection not available")
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
     
     if not mistral_client:
+        logger.error(f"[{request_id}] Mistral API client not configured")
         raise HTTPException(status_code=503, detail="Mistral API client not configured")
     
     try:
@@ -137,9 +145,18 @@ async def chat(query: Query):
                 "sources": []
             }
         
+        # Log search results
+        logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")        
+        
         # Format context from chunks
         context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
+        logger.info(f"[{request_id}] Context size: {len(context)} characters")
+
+        # Log generation attempt
+        logger.info(f"[{request_id}] Sending request to Mistral API using model: {mistral_model}")
         
+        start_time = time.time()        
+
         # Format sources for citation
         sources = [{"filename": obj.properties["filename"], "chunkId": obj.properties["chunkId"]} 
                    for obj in search_result.objects]
@@ -157,6 +174,12 @@ async def chat(query: Query):
         )
         
         answer = chat_response.choices[0].message.content
+
+        generation_time = time.time() - start_time
+        
+        # Log success and timing
+        logger.info(f"[{request_id}] Mistral response received in {generation_time:.2f}s")
+        logger.info(f"[{request_id}] Answer length: {len(answer)} characters")        
             
         return {
             "answer": answer,
