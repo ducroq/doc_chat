@@ -140,9 +140,14 @@ class DocumentStorage:
         
     def setup_schema(self):
         """Set up the Weaviate schema for document chunks."""
+        start_time = time.time()
+        logger.info("Setting up Weaviate schema for document chunks")
+        
         try:
             # Check if the collection already exists
             if not self.client.collections.exists("DocumentChunk"):
+                logger.info("DocumentChunk collection does not exist, creating new collection")
+                creation_start = time.time()
                 # Collection doesn't exist, create it            
                 self.client.collections.create(
                     name="DocumentChunk",
@@ -162,16 +167,23 @@ class DocumentStorage:
                         )
                     ]
                 )
-                logger.info("DocumentChunk collection created in Weaviate")
+                creation_time = time.time() - creation_start
+                logger.info(f"DocumentChunk collection created in Weaviate (took {creation_time:.2f}s)")
             else:
                 logger.info("DocumentChunk collection already exists in Weaviate")
+                
+            setup_time = time.time() - start_time
+            logger.info(f"Schema setup complete in {setup_time:.2f}s")
         except Exception as e:
             logger.error(f"Error setting up Weaviate schema: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-    
+
     def delete_chunks(self, filename):
         """Delete all chunks associated with a specific filename."""
+        start_time = time.time()
+        logger.info(f"Deleting chunks for file: {filename}")
+        
         try:
             # Get the collection
             collection = self.client.collections.get("DocumentChunk")
@@ -181,21 +193,30 @@ class DocumentStorage:
             where_filter = Filter.by_property("filename").equal(filename)
             
             # Delete using the filter
+            deletion_start = time.time()
             result = collection.data.delete_many(
                 where=where_filter
             )
+            deletion_time = time.time() - deletion_start
             
             # Log the result
             if hasattr(result, 'successful'):
-                logger.info(f"Deleted {result.successful} existing chunks for {filename}")
+                logger.info(f"Deleted {result.successful} existing chunks for {filename} in {deletion_time:.2f}s")
             else:
-                logger.info(f"No existing chunks found for {filename}")
+                logger.info(f"No existing chunks found for {filename} ({deletion_time:.2f}s)")
+                
+            total_time = time.time() - start_time
+            logger.debug(f"Total chunk deletion process took {total_time:.2f}s")
                 
         except Exception as e:
             logger.error(f"Error deleting existing chunks: {str(e)}")
-    
+
     def store_chunk(self, content, filename, chunk_id):
         """Store a document chunk in Weaviate."""
+        start_time = time.time()
+        chunk_size = len(content)
+        logger.debug(f"Storing chunk {chunk_id} from {filename} (size: {chunk_size} chars)")
+        
         try:
             properties = {
                 "content": content,
@@ -215,16 +236,20 @@ class DocumentStorage:
                 logger.debug(f"Deleted existing object with ID {obj_uuid}")
             except Exception as delete_error:
                 # It's okay if the object doesn't exist yet
-                logger.debug(f"Object with ID {obj_uuid} not found for deletion: {str(delete_error)}")
+                logger.debug(f"Object with ID {obj_uuid} not found for deletion (expected for new chunks)")
             
             # Now insert the object
+            insert_start = time.time()
             collection.data.insert(
                 properties=properties,
                 uuid=obj_uuid
             )
-            logger.info(f"Stored chunk {chunk_id} from {filename}")
+            insert_time = time.time() - insert_start
+            
+            total_time = time.time() - start_time
+            logger.debug(f"Stored chunk {chunk_id} from {filename} (size: {chunk_size} chars) in {total_time:.3f}s (insert: {insert_time:.3f}s)")
         except Exception as e:
-            logger.error(f"Error storing chunk: {str(e)}")
+            logger.error(f"Error storing chunk {chunk_id} from {filename}: {str(e)}")
     
     def get_chunks(self, query, limit=3):
         """
@@ -254,20 +279,26 @@ class ProcessingTracker:
         Args:
             tracker_file_path: Path to the JSON file storing processing records
         """
+        logger.info(f"Initializing file processing tracker at {tracker_file_path}")
         self.tracker_file_path = tracker_file_path
         self.processed_files = self._load_tracker()
-    
+        logger.info(f"Tracker initialized with {len(self.processed_files)} previously processed files")
+
     def _load_tracker(self):
         """Load the tracker file or create it if it doesn't exist."""
         if os.path.exists(self.tracker_file_path):
             try:
+                logger.info(f"Loading existing tracker file from {self.tracker_file_path}")
                 with open(self.tracker_file_path, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    logger.info(f"Successfully loaded tracker with {len(data)} records")
+                    return data
             except Exception as e:
                 logger.error(f"Error loading tracker file: {str(e)}")
                 return {}
+        logger.info("No existing tracker file found, starting with empty tracking")
         return {}
-    
+
     def _save_tracker(self):
         """Save the tracker data to file."""
         try:
@@ -290,31 +321,46 @@ class ProcessingTracker:
             file_mod_time = os.path.getmtime(file_path)
             file_key = os.path.basename(file_path)
             
+            logger.debug(f"Checking if file needs processing: {file_key}")
+            
             # If file not in tracker or has been modified, process it
-            if (file_key not in self.processed_files or 
-                file_mod_time > self.processed_files[file_key]['last_modified']):
+            if file_key not in self.processed_files:
+                logger.info(f"File {file_key} not in tracker, will be processed")
                 return True
-            return False
+            
+            last_mod_time = self.processed_files[file_key]['last_modified']
+            time_diff = file_mod_time - last_mod_time
+            
+            if time_diff > 0:
+                logger.info(f"File {file_key} has been modified since last processing " +
+                        f"({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_mod_time))} vs. " +
+                        f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_mod_time))})")
+                return True
+            else:
+                logger.debug(f"File {file_key} unchanged since last processing, skipping")
+                return False
         except Exception as e:
             logger.error(f"Error checking file status: {str(e)}")
             # If in doubt, process the file
             return True
-    
+
     def mark_as_processed(self, file_path):
         """Mark a file as processed with current timestamps."""
         try:
             file_mod_time = os.path.getmtime(file_path)
             file_key = os.path.basename(file_path)
+            process_time = time.time()
             
             self.processed_files[file_key] = {
                 'path': file_path,
                 'last_modified': file_mod_time,
-                'last_processed': time.time()
+                'last_processed': process_time,
+                'last_processed_human': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(process_time))
             }
             self._save_tracker()
-            logger.info(f"Marked {file_key} as processed")
+            logger.info(f"Marked {file_key} as processed (last modified: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_mod_time))})")
         except Exception as e:
-            logger.error(f"Error marking file as processed: {str(e)}")
+            logger.error(f"Error marking file as processed: {str(e)}")            
     
     def remove_file(self, filename):
         """Remove a file from the tracking record."""
@@ -370,10 +416,19 @@ class DocumentProcessor:
         Returns:
             bool: True if processing was successful, False otherwise
         """
-        logger.info(f"Processing file: {file_path}")
+        start_time = time.time()
+        
+        # Log file size for context
+        try:
+            file_size = os.path.getsize(file_path)
+            logger.info(f"Processing file: {file_path} (size: {file_size/1024:.1f} KB)")
+        except Exception as e:
+            logger.info(f"Processing file: {file_path} (size unknown: {str(e)})")
         
         # Validate file and get encoding
+        encoding_start = time.time()
         is_valid, result = detect_file_encoding(file_path)
+        encoding_time = time.time() - encoding_start
         
         if not is_valid:
             logger.error(f"Error processing file {file_path}: {result}")
@@ -381,32 +436,51 @@ class DocumentProcessor:
         
         # Result is the encoding if valid
         encoding = result
-        logger.info(f"File validated, using encoding: {encoding}")
+        logger.info(f"File validated, using encoding: {encoding} (detection took {encoding_time:.2f}s)")
         
         try:
+            read_start = time.time()
             with open(file_path, 'r', encoding=encoding) as file:
                 content = file.read()
-                logger.info(f"File content length: {len(content)} characters")
-                
-                # Get the filename without the path
-                filename = os.path.basename(file_path)
-                
-                # Delete existing chunks for this file if any
-                self.storage.delete_chunks(filename)
-                
-                # Split the content into chunks
-                chunks = chunk_text(content, self.chunk_size, self.chunk_overlap)
-                logger.info(f"Split into {len(chunks)} chunks")
-                
-                # Store each chunk in Weaviate
-                for i, chunk_content in enumerate(chunks):
-                    self.storage.store_chunk(chunk_content, filename, i)
-                    
-                logger.info(f"File {filename} processed successfully")
-                return True
+            read_time = time.time() - read_start
+            logger.info(f"File read complete in {read_time:.2f}s. Content length: {len(content)} characters")
+            
+            # Get the filename without the path
+            filename = os.path.basename(file_path)
+            
+            # Delete existing chunks for this file if any
+            deletion_start = time.time()
+            self.storage.delete_chunks(filename)
+            deletion_time = time.time() - deletion_start
+            logger.info(f"Previous chunks deletion completed in {deletion_time:.2f}s")
+            
+            # Split the content into chunks
+            chunk_start = time.time()
+            chunks = chunk_text(content, self.chunk_size, self.chunk_overlap)
+            chunk_time = time.time() - chunk_start
+            
+            avg_chunk_size = sum(len(c) for c in chunks) / max(len(chunks), 1)
+            logger.info(f"Text chunking complete in {chunk_time:.2f}s. Created {len(chunks)} chunks with avg size of {avg_chunk_size:.1f} chars")
+            
+            # Store each chunk in Weaviate
+            storage_start = time.time()
+            for i, chunk_content in enumerate(chunks):
+                chunk_store_start = time.time()
+                self.storage.store_chunk(chunk_content, filename, i)
+                if i % 5 == 0 and i > 0:  # Log progress every 5 chunks
+                    logger.info(f"Stored {i}/{len(chunks)} chunks from {filename}")
+            
+            storage_time = time.time() - storage_start
+            logger.info(f"All chunks stored successfully in {storage_time:.2f}s")
+            
+            total_time = time.time() - start_time
+            logger.info(f"File {filename} processed successfully in total time: {total_time:.2f}s")
+            return True
                 
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def process_directory(self, directory_path, tracker=None):
@@ -420,6 +494,7 @@ class DocumentProcessor:
         Returns:
             dict: Statistics about the processing (total, processed, failed)
         """
+        start_time = time.time()
         logger.info(f"Scanning for files in {directory_path}")
         text_files = glob.glob(os.path.join(directory_path, "*.txt"))
         logger.info(f"Found {len(text_files)} text files")
@@ -431,7 +506,8 @@ class DocumentProcessor:
             "failed": 0
         }
         
-        for file_path in text_files:
+        for i, file_path in enumerate(text_files):
+            logger.info(f"Processing file {i+1}/{len(text_files)}: {os.path.basename(file_path)}")
             # If tracker is provided, check if file needs processing
             if tracker and not tracker.should_process_file(file_path):
                 logger.info(f"Skipping already processed file: {file_path}")
@@ -449,7 +525,8 @@ class DocumentProcessor:
             else:
                 stats["failed"] += 1
         
-        logger.info(f"Directory processing complete. Stats: {stats}")
+        process_time = time.time() - start_time
+        logger.info(f"Directory processing complete in {process_time:.2f}s. Stats: {stats}")
         return stats
 
 # ------------ File Watcher Class ------------
@@ -463,53 +540,98 @@ class TextFileHandler(FileSystemEventHandler):
             document_processor: DocumentProcessor instance to process files
             tracker: Optional ProcessingTracker to track processed files
         """
+        logger.info("Initializing TextFileHandler for watching text files")
         self.processor = document_processor
         self.tracker = tracker
-    
+        self.stats = {
+            "created": 0,
+            "modified": 0,
+            "deleted": 0,
+            "processed": 0,
+            "failed": 0
+        }
+        self.start_time = time.time()
+        logger.info(f"TextFileHandler initialized with {'tracking enabled' if tracker else 'no tracking'}")
+
     def on_created(self, event):
         """Handle file creation events."""
         if event.is_directory or not event.src_path.endswith('.txt'):
             return
         
-        logger.info(f"New text file detected: {event.src_path}")
+        event_time = time.time()
+        file_size = os.path.getsize(event.src_path) if os.path.exists(event.src_path) else "unknown"
+        logger.info(f"New text file detected: {event.src_path} (size: {file_size} bytes)")
         
         # Process the new file
+        self.stats["created"] += 1
         success = self.processor.process_file(event.src_path)
         
         # Update tracker if processing was successful
-        if success and self.tracker:
-            self.tracker.mark_as_processed(event.src_path)
-    
+        if success:
+            self.stats["processed"] += 1
+            if self.tracker:
+                self.tracker.mark_as_processed(event.src_path)
+        else:
+            self.stats["failed"] += 1
+            
+        process_time = time.time() - event_time
+        logger.info(f"Creation event processed in {process_time:.2f}s (success: {success})")
+        
+        # Log overall statistics periodically
+        self._log_stats()
+
     def on_modified(self, event):
         """Handle file modification events."""
         if event.is_directory or not event.src_path.endswith('.txt'):
             return
         
-        logger.info(f"Text file modified: {event.src_path}")
+        event_time = time.time()
+        file_size = os.path.getsize(event.src_path) if os.path.exists(event.src_path) else "unknown"
+        logger.info(f"Text file modified: {event.src_path} (size: {file_size} bytes)")
         
         # Process the modified file
+        self.stats["modified"] += 1
         success = self.processor.process_file(event.src_path)
         
         # Update tracker if processing was successful
-        if success and self.tracker:
-            self.tracker.mark_as_processed(event.src_path)
-    
+        if success:
+            self.stats["processed"] += 1
+            if self.tracker:
+                self.tracker.mark_as_processed(event.src_path)
+        else:
+            self.stats["failed"] += 1
+            
+        process_time = time.time() - event_time
+        logger.info(f"Modification event processed in {process_time:.2f}s (success: {success})")
+        
+        # Log overall statistics periodically
+        self._log_stats()
+
     def on_deleted(self, event):
         """Handle file deletion events."""
         if event.is_directory or not event.src_path.endswith('.txt'):
             return
         
+        event_time = time.time()
         logger.info(f"Text file deleted: {event.src_path}")
         
         # Get the filename without the path
         filename = os.path.basename(event.src_path)
         
         # Delete the chunks from storage
+        self.stats["deleted"] += 1
         self.processor.storage.delete_chunks(filename)
         
         # Update tracker if available
+        tracker_updated = False
         if self.tracker:
-            self.tracker.remove_file(filename)
+            tracker_updated = self.tracker.remove_file(filename)
+            
+        process_time = time.time() - event_time
+        logger.info(f"Deletion event processed in {process_time:.2f}s (tracker updated: {tracker_updated})")
+        
+        # Log overall statistics periodically
+        self._log_stats()
     
     def process_existing_files(self, data_folder):
         """
@@ -524,6 +646,18 @@ class TextFileHandler(FileSystemEventHandler):
         logger.info(f"Processing existing files in {data_folder}")
         return self.processor.process_directory(data_folder, self.tracker)
     
+    def _log_stats(self):
+        """Log current statistics about file processing."""
+        current_time = time.time()
+        uptime = current_time - self.start_time
+        
+        # Log statistics every hour or after every 10 operations
+        total_ops = sum(self.stats.values())
+        if total_ops % 10 == 0 or (uptime // 3600) > ((uptime - 60) // 3600):
+            logger.info(f"TextFileHandler statistics - Uptime: {uptime//3600:.0f}h {(uptime%3600)//60:.0f}m {uptime%60:.0f}s")
+            logger.info(f"Events processed: created={self.stats['created']}, modified={self.stats['modified']}, " +
+                    f"deleted={self.stats['deleted']}, successful={self.stats['processed']}, failed={self.stats['failed']}")
+
     def start_watching(self, data_folder, process_existing=True):
         """
         Start watching a folder for file changes.
@@ -535,19 +669,40 @@ class TextFileHandler(FileSystemEventHandler):
         Returns:
             Observer: The started watchdog observer
         """
-        logger.info(f"Starting to watch folder: {data_folder}")
+        watch_start = time.time()
+        logger.info(f"Starting to watch folder: {data_folder} (process existing: {process_existing})")
         
         # Process existing files if requested
         if process_existing:
-            self.process_existing_files(data_folder)
+            stats = self.process_existing_files(data_folder)
+            logger.info(f"Processed existing files summary: total={stats['total']}, " +
+                    f"processed={stats['processed']}, skipped={stats['skipped']}, failed={stats['failed']}")
         
         # Set up watchdog for future changes
+        observer_start = time.time()
         observer = Observer()
         observer.schedule(self, data_folder, recursive=False)
         observer.start()
         
-        logger.info(f"Now watching folder {data_folder} for changes")
+        watch_time = time.time() - watch_start
+        logger.info(f"Now watching folder {data_folder} for changes (setup took {watch_time:.2f}s)")
+        
+        # Start regular stats logging
+        self._start_stats_logging()
+        
         return observer
+
+    def _start_stats_logging(self):
+        """Set up a background thread to log statistics periodically."""
+        def log_stats_thread():
+            while True:
+                time.sleep(3600)  # Log stats every hour
+                self._log_stats()
+        
+        import threading
+        stats_thread = threading.Thread(target=log_stats_thread, daemon=True)
+        stats_thread.start()
+        logger.info("Started periodic statistics logging")
 
 # ------------ Main Function ------------
 
