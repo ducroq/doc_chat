@@ -33,6 +33,7 @@ token_usage = {
     "reset_date": datetime.now().strftime("%Y-%m-%d")
 }
 request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
+response_cache = {}  # Dictionary to store cached responses
 
 # Models
 class Query(BaseModel):
@@ -74,11 +75,66 @@ def check_rate_limit():
     request_timestamps.append(now)
     return True
 
-# Simple cache for Mistral responses
-@lru_cache(maxsize=100)  # Adjust size as needed
+# Cache management functions
 def get_cached_response(query_hash, model):
-    # This function will be automatically cached
-    pass
+    """
+    Get a response from cache if it exists
+    
+    Args:
+        query_hash: Hash of the query and context
+        model: Model name used for generation
+    
+    Returns:
+        Cached response or None if not found
+    """
+    cache_key = f"{query_hash}_{model}"
+    cached_item = response_cache.get(cache_key)
+    
+    # If we have a cached item and it's not expired
+    if cached_item:
+        # Check if the cache is still valid (cached for less than 1 hour)
+        cache_time = cached_item.get("timestamp", 0)
+        if time.time() - cache_time < 3600:  # 1 hour cache validity
+            logger.info(f"Cache hit for key: {cache_key[:10]}...")
+            return cached_item.get("response")
+        else:
+            # Cache expired
+            logger.info(f"Cache expired for key: {cache_key[:10]}...")
+            del response_cache[cache_key]
+    
+    return None
+
+def set_cached_response(query_hash, model, response):
+    """
+    Store a response in the cache
+    
+    Args:
+        query_hash: Hash of the query and context
+        model: Model name used for generation
+        response: The response to cache
+    """
+    cache_key = f"{query_hash}_{model}"
+    
+    # Store the response with a timestamp
+    response_cache[cache_key] = {
+        "response": response,
+        "timestamp": time.time()
+    }
+    
+    # Limit cache size to 100 entries
+    if len(response_cache) > 100:
+        # Remove oldest entry (simple approach)
+        oldest_key = None
+        oldest_time = float('inf')
+        
+        for key, data in response_cache.items():
+            if data["timestamp"] < oldest_time:
+                oldest_time = data["timestamp"]
+                oldest_key = key
+        
+        if oldest_key:
+            del response_cache[oldest_key]
+            logger.info(f"Removed oldest cache entry: {oldest_key[:10]}...")
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def call_mistral_with_retry(client, model, messages, temperature):
@@ -414,8 +470,7 @@ async def chat(query: Query):
 
         # Cache the result before returning
         result = {"answer": answer, "sources": sources}
-        get_cached_response.cache_clear()  # Clear one entry if needed
-        get_cached_response(cache_key, MISTRAL_MODEL)  # Store in cache        
+        set_cached_response(cache_key, MISTRAL_MODEL, result)
             
         return result
             
