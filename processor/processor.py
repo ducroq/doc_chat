@@ -164,6 +164,10 @@ class DocumentStorage:
                         weaviate.classes.config.Property(
                             name="chunkId", 
                             data_type=DataType.INT
+                        ),
+                        weaviate.classes.config.Property(
+                            name="metadataJson", 
+                            data_type=DataType.TEXT
                         )
                     ]
                 )
@@ -211,8 +215,8 @@ class DocumentStorage:
         except Exception as e:
             logger.error(f"Error deleting existing chunks: {str(e)}")
 
-    def store_chunk(self, content, filename, chunk_id):
-        """Store a document chunk in Weaviate."""
+    def store_chunk(self, content, filename, chunk_id, metadata=None):
+        """Store a document chunk in Weaviate with metadata as a JSON string."""
         start_time = time.time()
         chunk_size = len(content)
         logger.debug(f"Storing chunk {chunk_id} from {filename} (size: {chunk_size} chars)")
@@ -223,6 +227,14 @@ class DocumentStorage:
                 "filename": filename,
                 "chunkId": chunk_id
             }
+            
+            # Add metadata as a JSON string if provided
+            if metadata and isinstance(metadata, dict):
+                try:
+                    properties["metadataJson"] = json.dumps(metadata)
+                    logger.debug(f"Added metadata to chunk {chunk_id} from {filename}")
+                except Exception as e:
+                    logger.error(f"Error serializing metadata for {filename}, chunk {chunk_id}: {str(e)}")
             
             # Create a UUID based on filename and chunk_id for consistency
             obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{filename}_{chunk_id}"))
@@ -250,7 +262,7 @@ class DocumentStorage:
             logger.debug(f"Stored chunk {chunk_id} from {filename} (size: {chunk_size} chars) in {total_time:.3f}s (insert: {insert_time:.3f}s)")
         except Exception as e:
             logger.error(f"Error storing chunk {chunk_id} from {filename}: {str(e)}")
-    
+                
     def get_chunks(self, query, limit=3):
         """
         Retrieve chunks relevant to a query.
@@ -447,6 +459,19 @@ class DocumentProcessor:
             
             # Get the filename without the path
             filename = os.path.basename(file_path)
+
+            # Check for associated metadata file
+            metadata = None
+            base_name = os.path.splitext(filename)[0]
+            metadata_path = os.path.join(os.path.dirname(file_path), f"{base_name}.metadata.json")
+            
+            if os.path.exists(metadata_path):
+                try:
+                    with open(metadata_path, 'r', encoding='utf-8') as meta_file:
+                        metadata = json.load(meta_file)
+                    logger.info(f"Loaded metadata from {metadata_path}")
+                except Exception as e:
+                    logger.error(f"Error loading metadata from {metadata_path}: {str(e)}")
             
             # Delete existing chunks for this file if any
             deletion_start = time.time()
@@ -466,7 +491,7 @@ class DocumentProcessor:
             storage_start = time.time()
             for i, chunk_content in enumerate(chunks):
                 chunk_store_start = time.time()
-                self.storage.store_chunk(chunk_content, filename, i)
+                self.storage.store_chunk(chunk_content, filename, i, metadata)
                 if i % 5 == 0 and i > 0:  # Log progress every 5 chunks
                     logger.info(f"Stored {i}/{len(chunks)} chunks from {filename}")
             

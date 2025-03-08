@@ -59,7 +59,38 @@ if prompt := st.chat_input("Ask a question about your documents..."):
                     if sources:
                         st.caption("Sources:")
                         for source in sources:
-                            st.caption(f"• {source['filename']} (Chunk {source['chunkId']})")
+                            filename = source['filename']
+                            chunk_id = source['chunkId']
+                            metadata = source.get('metadata', {})
+                            
+                            # Basic source info
+                            source_text = f"• {filename} (Chunk {chunk_id})"
+                            
+                            # Add metadata if available
+                            if metadata:
+                                if 'title' in metadata:
+                                    source_text += f" - {metadata['title']}"
+                                if 'itemType' in metadata:
+                                    source_text += f" [{metadata['itemType']}]"
+                                
+                                # Handle creators/authors
+                                if 'creators' in metadata and metadata['creators']:
+                                    authors = []
+                                    for creator in metadata['creators']:
+                                        if creator.get('creatorType') == 'author':
+                                            name = f"{creator.get('lastName', '')}, {creator.get('firstName', '')}"
+                                            authors.append(name.strip(', '))
+                                    if authors:
+                                        source_text += f" by {', '.join(authors[:2])}"
+                                        if len(authors) > 2:
+                                            source_text += f" et al."
+                                
+                                # Add date if available
+                                if 'date' in metadata:
+                                    source_text += f" ({metadata['date']})"
+                            
+                            # Display the source with option to show full metadata
+                            st.caption(source_text)
                     
                     # Add assistant message to chat history
                     st.session_state.messages.append({

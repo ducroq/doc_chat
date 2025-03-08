@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import uuid
 import logging
@@ -277,10 +278,10 @@ async def lifespan(app: FastAPI):
                 collection = client.collections.get("DocumentChunk")
                 logger.info(f"Weaviate: DocumentChunk collection exists")
                 
-                # Check if there's any data - using proper Weaviate v4 API
+                # Check if there's any data
                 try:
-                    # Use count_objects() method which is the correct approach in Weaviate v4
-                    count = collection.count_objects()
+                    # Get count using aggregate API
+                    count = collection.aggregate.over_all().total_count
                     logger.info(f"Weaviate: DocumentChunk contains {count} objects")
                 except Exception as e:
                     logger.warning(f"Could not get document count: {str(e)}")
@@ -347,7 +348,7 @@ async def search_documents(query: Query):
         search_result = collection.query.near_text(
             query=query.question,
             limit=5,
-            return_properties=["content", "filename", "chunkId"]
+            return_properties=["content", "filename", "chunkId", "metadataJson"]
         )
         
         # Format results
@@ -507,7 +508,7 @@ async def chat(query: Query):
         search_result = collection.query.near_text(
             query=query.question,
             limit=3,
-            return_properties=["content", "filename", "chunkId"]
+            return_properties=["content", "filename", "chunkId", "metadataJson"]
         )
         
         # Check if we got any results
@@ -554,8 +555,22 @@ async def chat(query: Query):
         start_time = time.time()        
 
         # Format sources for citation
-        sources = [{"filename": obj.properties["filename"], "chunkId": obj.properties["chunkId"]} 
-                   for obj in search_result.objects]
+        sources = []
+        for obj in search_result.objects:
+            source = {
+                "filename": obj.properties["filename"], 
+                "chunkId": obj.properties["chunkId"]
+            }
+            
+            # Parse metadata JSON if it exists
+            if "metadataJson" in obj.properties and obj.properties["metadataJson"]:
+                try:
+                    metadata = json.loads(obj.properties["metadataJson"])
+                    source["metadata"] = metadata
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse metadata JSON for {obj.properties['filename']}")
+            
+            sources.append(source)
         
         # Use Mistral client to generate response
         messages = [
