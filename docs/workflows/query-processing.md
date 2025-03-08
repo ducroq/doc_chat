@@ -115,7 +115,9 @@ The context and query are sent to Mistral AI:
 When the LLM generates a response:
 
 1. The answer is extracted
-2. Source information (filenames and chunk IDs) is added
+2. Source information is added, including:
+   - Filenames and chunk IDs
+   - Document metadata (title, authors, date, etc.)
 3. The complete response is sent back to the frontend
 4. The response is cached for future identical queries
 
@@ -124,7 +126,9 @@ When the LLM generates a response:
 The web interface:
 
 1. Displays the generated answer
-2. Shows source citations
+2. Shows source citations with metadata:
+   - Basic citation: filename and chunk ID
+   - Enhanced citation: title, authors, publication details
 3. Adds the interaction to the conversation history
 
 ## Error Handling

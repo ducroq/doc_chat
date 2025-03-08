@@ -1,3 +1,13 @@
+### collect chat history for improvement of the system
+
+
+### Security Enhancements
+- [ ] Add basic authentication for web interface
+- [ ] Implement request validation
+- [ ] Add API key rotation mechanism
+- [ ] Set up proper CORS policies
+- [ ] Add content filtering for document ingestion
+
 ## Prototype Improvements
 - [ ] Improve chunking strategy
 - [ ] Fix any UI issues in the Streamlit interface
@@ -16,7 +26,6 @@
 ### Document Management Enhancements
 - [ ] Add support for additional file formats (PDF, DOCX)
 - [ ] Implement better chunking strategies for improved retrieval
-- [ ] Add metadata extraction from documents
 - [ ] Create a document management panel for admins
 - [ ] Implement versioning for document updates
 
@@ -39,13 +48,6 @@
 - [ ] Implement batching for document processing
 - [ ] Add rate limiting and request queuing
 - [ ] Optimize embedding model for Dutch language
-
-### Security Enhancements
-- [ ] Add basic authentication for web interface
-- [ ] Implement request validation
-- [ ] Add API key rotation mechanism
-- [ ] Set up proper CORS policies
-- [ ] Add content filtering for document ingestion
 
 ### Integration Options
 - [ ] Add email notification functionality

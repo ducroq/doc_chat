@@ -61,6 +61,7 @@ The system uses the Python `watchdog` library to monitor a designated folder for
 - New files: Processed and indexed
 - Modified files: Re-processed and re-indexed
 - Deleted files: Removed from the index
+- Metadata files: Associated with corresponding text files
 
 The processor tracks file modification times to avoid redundant processing.
 
@@ -71,6 +72,19 @@ When a text file is detected:
 1. File encoding is detected automatically
 2. Text content is read into memory
 3. Any existing chunks for this file are deleted from the database
+
+### 2a. Metadata Processing
+
+When a text file is detected:
+
+1. The processor checks for a corresponding `.metadata.json` file
+2. If found, the metadata is parsed and validated
+3. Metadata is associated with all chunks from that document
+
+Valid metadata files must:
+- Have the same base name as the text file
+- Use the `.metadata.json` extension
+- Contain properly formatted JSON
 
 ### 3. Text Chunking
 
@@ -92,6 +106,7 @@ Each chunk is stored in Weaviate with:
 - **content**: The actual text content
 - **filename**: Source document name
 - **chunkId**: Sequential number within the document
+- **metadataJson**: Document metadata as a JSON string
 
 A consistent UUID is generated for each chunk based on filename and chunk ID, ensuring that updates to existing files replace the correct chunks.
 

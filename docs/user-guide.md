@@ -35,7 +35,7 @@ Good questions are specific and relate to content in the documents:
 The system provides:
 
 1. **Answer**: Generated text that addresses your question
-2. **Sources**: References to the specific documents and chunks used to generate the answer
+2. **Sources**: References to the specific documents and chunks used to generate the answer, including document metadata
 
 Example response:
 
@@ -43,16 +43,16 @@ Example response:
 The document processor chunks text into segments of approximately 1000 characters with 200 character overlap. This chunking strategy balances the need for chunks that are small enough for precise retrieval but large enough to provide adequate context.
 
 Sources:
-• processor.py (Chunk 3)
-• docs/document_processing.md (Chunk 2)
+- processor.py (Chunk 3) - Technical Documentation [codeDocumentation] by System Team (2024)
+- docs/document_processing.md (Chunk 2) - Text Processing Algorithm [journalArticle] by Smith, J. et al. (2023)
 ```
 
-### Source Citations
-
+### Source Citations with Metadata
 Source citations help you:
 - Verify the information is correct
 - Find more context in the original documents
 - Understand where the answer is coming from
+- Identify the document type, authors, and publication details
 
 ## Conversation History
 

@@ -8,15 +8,27 @@ doc_chat/
 │   ├── main.py
 │   ├── requirements.txt
 ├── docs/
-│   ├── architecture-diagram.svg
-│   ├── chat_with_your_data.md
-│   ├── docker_debugging_notes.md
-│   ├── llm-comparison.md
-│   ├── prompt_engineering.md
-│   ├── requirements-table.md
-│   ├── simplified-architecture.svg
-│   ├── todo.md
-│   ├── weviate_mistral_api.md
+│   ├── components/
+│   ├── diagrams/
+│   │   ├── architecture-diagram.svg
+│   │   ├── document-processing-sequence.mermaid
+│   │   ├── query-processing-sequence.mermaid
+│   │   ├── simplified-architecture.svg
+│   ├── temp/
+│   │   ├── chat_with_your_data.md
+│   │   ├── docker_debugging_notes.md
+│   │   ├── llm-comparison.md
+│   │   ├── prompt_engineering.md
+│   │   ├── requirements-table.md
+│   │   ├── todo.md
+│   │   ├── weviate_mistral_api.md
+│   ├── workflows/
+│   │   ├── document-processing.md
+│   │   ├── query-processing.md
+│   ├── architecture.md
+│   ├── deployment-guide.md
+│   ├── developer-guide.md
+│   ├── user-guide.md
 ├── processor/
 │   ├── Dockerfile
 │   ├── processor.py
@@ -676,7 +688,7 @@ tenacity==8.0.1
 ```
 
 
-# docs\architecture-diagram.svg
+# docs\diagrams\architecture-diagram.svg
 ```text
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 650">
   <!-- Background -->
@@ -826,264 +838,100 @@ tenacity==8.0.1
 ```
 
 
-# docs\chat_with_your_data.md
-```markdown
-# Chat with your data solutions
-
-RAG is currently popular because it balances effectiveness, cost, and implementation complexity. Each alternative has specific trade-offs around data size limits, training requirements, and maintenance complexity. Alternatively, fine-tuning an LLM directly on your data is an option.
-
-# RAG Implementation Options Comparison
-
-| Aspect | Self-Hosted | Cloud Services | Hybrid |
-|--------|-------------|----------------|---------|
-| **Data Privacy** | Maximum control, data stays on premises, compliance-friendly | Data leaves premises, requires vendor agreements, potential compliance issues | Data processing on premises, only queries to cloud LLM |
-| **Setup Complexity** | High - requires infrastructure setup, software installation, integration | Low - minimal setup, managed services | Medium - local infrastructure needed but reduced complexity |
-| **Maintenance** | High - regular updates, monitoring, troubleshooting required | Low - vendor managed updates and maintenance | Medium - split responsibility between local and cloud components |
-| **Scalability** | Limited by local hardware (10-100 concurrent users) | High (1000+ users), automatic scaling | Depends on local infrastructure, typically medium (100-500 users) |
-| **Initial Cost** | High - hardware, setup labor, software licenses | Low - usually pay-as-you-go | Medium - some hardware costs, reduced setup complexity |
-| **Per-Query Cost** | Low - mainly power and maintenance | Medium to High ($0.01-0.10 per query) | Medium - split between local costs and API fees |
-| **Example Solutions** | LocalGPT, custom LlamaIndex implementation | Azure AI Search, Amazon Kendra | Hybrid LangChain with cloud LLM |
-| **Best For** | High privacy requirements, technical teams, cost-sensitive at scale | Quick deployment, scalability needs, limited IT resources | Balance of control and convenience, moderate scale |
-
-
-# RAG Solutions Deployment Options
-
-| Solution | Type | Description |
-|----------|------|-------------|
-| **Self-Hosted Solutions** |
-| LocalGPT | Self-hosted | Complete local RAG implementation with local LLMs |
-| LlamaIndex | Self-hosted | Framework for building custom RAG pipelines |
-| Chroma | Self-hosted | Vector database with RAG capabilities |
-| Weaviate | Self-hosted/Cloud | Vector database, can be self-hosted or cloud |
-| Qdrant | Self-hosted/Cloud | Vector database with both deployment options |
-| txtai | Self-hosted | Lightweight semantic search engine |
-| **Cloud Services** |
-| Azure AI Search | Cloud | Microsoft's enterprise search with RAG |
-| Amazon Kendra | Cloud | AWS enterprise search solution |
-| Pinecone | Cloud | Managed vector database service |
-| Supabase | Cloud | PostgreSQL-based vector search |
-| Zilliz | Cloud | Cloud-native vector database platform |
-| Google Vertex AI Search | Cloud | Google's enterprise search solution |
-| **Hybrid/SaaS Solutions** |
-| Embedchain | Hybrid | No-code RAG platform |
-| GPTCache | Hybrid | Caching layer for LLM responses |
-| Vectara | Hybrid | Enterprise search with flexible deployment |
-| LangChain | Hybrid | Framework supporting various deployments |
-
-
-# European/independent options
-
-European Cloud Providers:
-- Mistral AI (French) - Offers AI/LLM services
-- OVHcloud (French) - Enterprise cloud with AI capabilities
-- T-Systems (German) - Enterprise solutions
-- Scaleway (French) - Cloud infrastructure
-
-Independent Vector DB/Search:
-- Weaviate (Dutch company)
-- Qdrant (Originally Russian, now EU-based)
-- Milvus (Open source, can self-host)
-
-These typically offer:
-- GDPR compliance
-- EU data sovereignty
-- Transparent pricing
-- Open source components
-
-For maximum independence, consider self-hosting using open source tools like Weaviate or Qdrant combined with local LLMs or European LLM providers.
-
-
-# The basic workflow would be:
-1. Load documents into Weaviate
-2. Weaviate chunks and creates embeddings
-3. Connect to Mistral API for LLM responses
-4. Query system finds relevant chunks using vector search
-5. Mistral LLM generates answers based on retrieved context
-
-Benefits:
-- EU-based solution
-- GDPR compliant
-- Self-hosted data control
-- Good documentation/community
-- Scales well with large documents
-
+# docs\diagrams\document-processing-sequence.mermaid
+```text
+sequenceDiagram
+    actor Admin
+    participant Folder as Watched Folder
+    participant Processor as Document Processor
+    participant Chunker as Text Chunker
+    participant Weaviate as Vector Database
+    participant Embedder as Text2Vec-Transformers
+    
+    Admin->>Folder: Add/modify .txt file
+    Folder-->>Processor: File change event
+    
+    Processor->>Processor: Validate file & detect encoding
+    
+    Processor->>Folder: Read file content
+    Folder-->>Processor: Return text content
+    
+    Processor->>Weaviate: Delete existing chunks (if any)
+    Weaviate-->>Processor: Confirm deletion
+    
+    Processor->>Chunker: Send text for chunking
+    Chunker->>Chunker: Split text with overlap
+    Chunker-->>Processor: Return text chunks
+    
+    loop For each chunk
+        Processor->>Weaviate: Store chunk with metadata
+        Weaviate->>Embedder: Request vector embedding
+        Embedder->>Embedder: Generate embedding
+        Embedder-->>Weaviate: Return vector embedding
+        Weaviate->>Weaviate: Index chunk with vector
+        Weaviate-->>Processor: Confirm storage
+    end
+    
+    Processor->>Processor: Update processing tracker
+    
+    Note over Processor,Weaviate: Document is now searchable
 
 ```
 
 
-# docs\docker_debugging_notes.md
-```markdown
+# docs\diagrams\query-processing-sequence.mermaid
+```text
+sequenceDiagram
+    actor User
+    participant WebUI as Web Interface
+    participant API as API Service
+    participant Cache as Response Cache
+    participant Weaviate as Vector Database
+    participant Embedder as Text2Vec-Transformers
+    participant Mistral as Mistral AI
 
-
-```bash
-docker-compose config    
-```
-
-```bash
-docker-compose ps  
-```
-
-Stop all running containers
-```bash
-docker-compose down
-```
-
-List all Docker volumes to find the Weaviate data volume
-```bash
-docker volume ls
-```
-
-Remove the Weaviate data volume
-```bash
-docker volume rm doc_chat_weaviate_data
-```
-
-
-Rebuild and restart a container, e.g. the processor:
-```bash
-docker-compose stop processor
-docker-compose build processor
-docker-compose up -d processor
-```
-
-Check the logs to see if it's processing the existing files (--follow gives real-time logs):
-
-```bash
-docker logs doc_chat-processor-1 --follow
-```
-
-Check if the processor environment variables are correct:
-```bash
-docker inspect doc_chat-processor-1 | Select-String "DATA_FOLDER"
-```
-
-List the contents of the data directory as seen by the container:
-```bash
-docker exec doc_chat-processor-1 ls -la /data
-```
-
-Print the current working directory in the container
-```bash
-docker exec doc_chat-processor-1 pwd
-```
-
-Check the environment variables to see what DATA_FOLDER is set to
-```bash
-docker exec doc_chat-processor-1 printenv | findstr DATA_FOLDER
-```
-
-Check if the processor container can read a specific file
-```bash
-docker exec doc_chat-processor-1 cat /data/gdpr_info.txt
-```
-
-
+    User->>WebUI: Submit question
+    WebUI->>API: POST /chat with question
+    
+    API->>API: Generate request ID
+    API->>API: Check rate limits
+    
+    API->>Cache: Check for cached response
+    alt Cache hit
+        Cache-->>API: Return cached response
+        API-->>WebUI: Return response with sources
+        WebUI-->>User: Display answer with sources
+    else Cache miss
+        Cache-->>API: No cached response
+        
+        API->>API: Check token budget
+        
+        API->>Weaviate: Search for relevant chunks
+        Weaviate->>Embedder: Convert query to vector
+        Embedder-->>Weaviate: Return query vector
+        Weaviate->>Weaviate: Perform vector similarity search
+        Weaviate-->>API: Return top matching chunks
+        
+        API->>API: Format chunks as context
+        
+        API->>Mistral: Send prompt with context and question
+        Mistral->>Mistral: Generate response
+        Mistral-->>API: Return generated text
+        
+        API->>API: Format final response with sources
+        API->>API: Track token usage
+        
+        API->>Cache: Store response in cache
+        Cache-->>API: Confirm storage
+        
+        API-->>WebUI: Return response with sources
+        WebUI-->>User: Display answer with sources
+    end
 
 ```
 
 
-# docs\llm-comparison.md
-```markdown
-| Feature | Local Llama (via Ollama) | Mistral AI (French) |
-|---------|------------------------|---------------------|
-| **EU Compliance** |
-| Data Location | All data stays local | EU-based company with EU data centers |
-| GDPR Compliance | Inherently compliant (self-hosted) | Built with GDPR compliance |
-| Data Sovereignty | Complete control | EU-based, subject to EU laws |
-| **Technical Aspects** |
-| Performance | Limited by local hardware | High-performance cloud infrastructure |
-| Dutch Language Support | Varies by model version | Generally good multilingual support |
-| Latency | No network latency, but depends on hardware | Network latency, but faster processing |
-| Offline Usage | Fully offline capable | Requires internet connection |
-| **Operational Considerations** |
-| Hardware Requirements | Significant local resources needed | Minimal local resources |
-| Maintenance | Self-maintained | Managed service |
-| Scalability | Limited by hardware | Easily scalable |
-| Updates | Manual updates required | Automatic updates |
-| **Cost Structure** |
-| Pricing Model | One-time hardware cost | Pay-per-use or subscription |
-| Budget Predictability | Predictable (fixed costs) | Variable based on usage |
-| Long-term Cost | Higher upfront, lower ongoing | Lower upfront, potentially higher ongoing |
-| **Integration & Support** |
-| API Documentation | Open source documentation | Commercial documentation |
-| Support | Community support | Commercial support |
-| Integration Complexity | Requires more integration work | Well-documented API |
-| **Pros & Cons Summary** |
-| Pros | • Complete data control<br>• No ongoing API costs<br>• No dependency on third parties<br>• No internet requirement | • Better performance<br>• Lower hardware requirements<br>• Managed service<br>• Always updated<br>• EU-based company |
-| Cons | • Higher hardware requirements<br>• Potentially lower performance<br>• Manual maintenance<br>• Limited by local resources | • Ongoing costs<br>• Internet dependency<br>• Less direct control over data<br>• Subject to service changes |
-| **Recommended For** | • Maximum data privacy requirements<br>• Fixed budget constraints<br>• Environments with limited internet | • Better performance needs<br>• Limited local hardware<br>• Scalability requirements<br>• Ease of maintenance priority |
-
-```
-
-
-# docs\prompt_engineering.md
-```markdown
-
-
-Improve the prompt engineering for Mistral AI:
-
-Refine the system prompt in the chat endpoint
-Adjust temperature and other generation parameters
-```
-
-
-# docs\requirements-table.md
-```markdown
-| Requirement ID | Category | Description | Priority | Notes |
-|--------------|----------|-------------|----------|-------|
-| **Deployment Requirements** |
-| DEP-1 | Environment | System should be deployable in an academic setting | High | |
-| DEP-2 | Platform | Solution should be platform-independent | High | |
-| DEP-3 | Hosting | System should be deployable to cloud services | High | |
-| DEP-4 | Scale | Support approximately 1000 pages of text documents | Medium | |
-| DEP-5 | Containerization | Use Docker for containerization and deployment | High | |
-| DEP-6 | Deployment Ease | Easy deployment and testing process | High | |
-| DEP-7 | Scalability | Scalable to hundreds of users | Medium | |
-| DEP-8 | Implementation | Simple Python-based deployment | Medium | |
-| DEP-9 | Evolution | Simple prototype-to-production path | Medium | |
-| **Document Management Requirements** |
-| DOC-1 | Access Control | Only admins can add or modify documents | High | |
-| DOC-2 | Ingestion | Documents added by placing text files in a watched folder | High | |
-| DOC-3 | Format | Focus on text files (.txt) as primary format | High | |
-| DOC-4 | External Processing | PDF and other formats handled as separate concern | Medium | |
-| DOC-5 | Update Frequency | Support infrequent updates (monthly/bimonthly) | Low | |
-| **User Interface Requirements** |
-| UI-1 | Access | Provide open access web interface (no authentication) | Medium | |
-| UI-2 | Interaction | Chat-based interface for document queries | High | |
-| UI-3 | References | Display source references for answers | High | |
-| UI-4 | Usability | Simple, intuitive interface for academic users | Medium | |
-| **RAG Implementation Requirements** |
-| RAG-1 | Vector Database | Use Weaviate for document storage and retrieval | High | |
-| RAG-2 | Text Processing | Chunk documents for better retrieval | High | |
-| RAG-3 | LLM Integration | Use locally installed Ollama with Llama models | High | |
-| RAG-4 | Context Creation | Format retrieved chunks as context for LLM | High | |
-| RAG-5 | Response Generation | Generate natural language responses from context | High | |
-| **Language Support Requirements** |
-| LANG-1 | Primary Language | Support Dutch as primary language | High | |
-| LANG-2 | Future Support | Architecture should allow adding English later | Medium | |
-| **Maintenance Requirements** |
-| MAINT-1 | Monitoring | Include basic system monitoring capabilities | Medium | |
-| MAINT-2 | Logging | Implement comprehensive logging | Medium | |
-| MAINT-3 | Documentation | Provide maintenance documentation | High | |
-| MAINT-4 | System Health | Include health check endpoints | Low | |
-| **Architecture Requirements** |
-| ARCH-1 | Components | Modular component-based architecture | High | |
-| ARCH-2 | Data Privacy | All components run locally, no data leaves system | High | |
-| ARCH-3 | Documentation | Mermaid diagrams for system visualization | Medium | |
-| ARCH-4 | Extensibility | Support future enhancements and integrations | Medium | |
-| ARCH-5 | Open Source | Use open source components wherever possible | High | |
-| ARCH-6 | Self-hosting | Self-hostable components for maximum control | High | |
-| ARCH-7 | Document Handling | Ability to scale well with large documents | Medium | |
-| **EU Compliance Requirements** |
-| EU-1 | Data Sovereignty | Full EU data sovereignty | High | |
-| EU-2 | GDPR | GDPR compliant architecture and processes | High | |
-| EU-3 | EU-based Services | EU-based solution components where cloud services are used | High | |
-| EU-4 | Transparency | Transparent pricing and data handling | Medium | |
-
-```
-
-
-# docs\simplified-architecture.svg
+# docs\diagrams\simplified-architecture.svg
 ```text
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
   <!-- Background -->
@@ -1196,35 +1044,271 @@ Adjust temperature and other generation parameters
 ```
 
 
-# docs\todo.md
+# docs\temp\chat_with_your_data.md
+```markdown
+# Chat with your data solutions
+
+RAG is currently popular because it balances effectiveness, cost, and implementation complexity. Each alternative has specific trade-offs around data size limits, training requirements, and maintenance complexity. Alternatively, fine-tuning an LLM directly on your data is an option.
+
+# RAG Implementation Options Comparison
+
+| Aspect | Self-Hosted | Cloud Services | Hybrid |
+|--------|-------------|----------------|---------|
+| **Data Privacy** | Maximum control, data stays on premises, compliance-friendly | Data leaves premises, requires vendor agreements, potential compliance issues | Data processing on premises, only queries to cloud LLM |
+| **Setup Complexity** | High - requires infrastructure setup, software installation, integration | Low - minimal setup, managed services | Medium - local infrastructure needed but reduced complexity |
+| **Maintenance** | High - regular updates, monitoring, troubleshooting required | Low - vendor managed updates and maintenance | Medium - split responsibility between local and cloud components |
+| **Scalability** | Limited by local hardware (10-100 concurrent users) | High (1000+ users), automatic scaling | Depends on local infrastructure, typically medium (100-500 users) |
+| **Initial Cost** | High - hardware, setup labor, software licenses | Low - usually pay-as-you-go | Medium - some hardware costs, reduced setup complexity |
+| **Per-Query Cost** | Low - mainly power and maintenance | Medium to High ($0.01-0.10 per query) | Medium - split between local costs and API fees |
+| **Example Solutions** | LocalGPT, custom LlamaIndex implementation | Azure AI Search, Amazon Kendra | Hybrid LangChain with cloud LLM |
+| **Best For** | High privacy requirements, technical teams, cost-sensitive at scale | Quick deployment, scalability needs, limited IT resources | Balance of control and convenience, moderate scale |
+
+
+# RAG Solutions Deployment Options
+
+| Solution | Type | Description |
+|----------|------|-------------|
+| **Self-Hosted Solutions** |
+| LocalGPT | Self-hosted | Complete local RAG implementation with local LLMs |
+| LlamaIndex | Self-hosted | Framework for building custom RAG pipelines |
+| Chroma | Self-hosted | Vector database with RAG capabilities |
+| Weaviate | Self-hosted/Cloud | Vector database, can be self-hosted or cloud |
+| Qdrant | Self-hosted/Cloud | Vector database with both deployment options |
+| txtai | Self-hosted | Lightweight semantic search engine |
+| **Cloud Services** |
+| Azure AI Search | Cloud | Microsoft's enterprise search with RAG |
+| Amazon Kendra | Cloud | AWS enterprise search solution |
+| Pinecone | Cloud | Managed vector database service |
+| Supabase | Cloud | PostgreSQL-based vector search |
+| Zilliz | Cloud | Cloud-native vector database platform |
+| Google Vertex AI Search | Cloud | Google's enterprise search solution |
+| **Hybrid/SaaS Solutions** |
+| Embedchain | Hybrid | No-code RAG platform |
+| GPTCache | Hybrid | Caching layer for LLM responses |
+| Vectara | Hybrid | Enterprise search with flexible deployment |
+| LangChain | Hybrid | Framework supporting various deployments |
+
+
+# European/independent options
+
+European Cloud Providers:
+- Mistral AI (French) - Offers AI/LLM services
+- OVHcloud (French) - Enterprise cloud with AI capabilities
+- T-Systems (German) - Enterprise solutions
+- Scaleway (French) - Cloud infrastructure
+
+Independent Vector DB/Search:
+- Weaviate (Dutch company)
+- Qdrant (Originally Russian, now EU-based)
+- Milvus (Open source, can self-host)
+
+These typically offer:
+- GDPR compliance
+- EU data sovereignty
+- Transparent pricing
+- Open source components
+
+For maximum independence, consider self-hosting using open source tools like Weaviate or Qdrant combined with local LLMs or European LLM providers.
+
+
+# The basic workflow would be:
+1. Load documents into Weaviate
+2. Weaviate chunks and creates embeddings
+3. Connect to Mistral API for LLM responses
+4. Query system finds relevant chunks using vector search
+5. Mistral LLM generates answers based on retrieved context
+
+Benefits:
+- EU-based solution
+- GDPR compliant
+- Self-hosted data control
+- Good documentation/community
+- Scales well with large documents
+
+
+```
+
+
+# docs\temp\docker_debugging_notes.md
+```markdown
+
+
+```bash
+docker-compose config    
+```
+
+```bash
+docker-compose ps  
+```
+
+Stop all running containers
+```bash
+docker-compose down
+```
+
+List all Docker volumes to find the Weaviate data volume
+```bash
+docker volume ls
+```
+
+Remove the Weaviate data volume
+```bash
+docker volume rm doc_chat_weaviate_data
+```
+
+
+Rebuild and restart a container, e.g. the processor:
+```bash
+docker-compose stop processor
+docker-compose build processor
+docker-compose up -d processor
+```
+
+Check the logs to see if it's processing the existing files (--follow gives real-time logs):
+
+```bash
+docker logs doc_chat-processor-1 --follow
+```
+
+Check if the processor environment variables are correct:
+```bash
+docker inspect doc_chat-processor-1 | Select-String "DATA_FOLDER"
+```
+
+List the contents of the data directory as seen by the container:
+```bash
+docker exec doc_chat-processor-1 ls -la /data
+```
+
+Print the current working directory in the container
+```bash
+docker exec doc_chat-processor-1 pwd
+```
+
+Check the environment variables to see what DATA_FOLDER is set to
+```bash
+docker exec doc_chat-processor-1 printenv | findstr DATA_FOLDER
+```
+
+Check if the processor container can read a specific file
+```bash
+docker exec doc_chat-processor-1 cat /data/gdpr_info.txt
+```
+
+
+
+```
+
+
+# docs\temp\llm-comparison.md
+```markdown
+| Feature | Local Llama (via Ollama) | Mistral AI (French) |
+|---------|------------------------|---------------------|
+| **EU Compliance** |
+| Data Location | All data stays local | EU-based company with EU data centers |
+| GDPR Compliance | Inherently compliant (self-hosted) | Built with GDPR compliance |
+| Data Sovereignty | Complete control | EU-based, subject to EU laws |
+| **Technical Aspects** |
+| Performance | Limited by local hardware | High-performance cloud infrastructure |
+| Dutch Language Support | Varies by model version | Generally good multilingual support |
+| Latency | No network latency, but depends on hardware | Network latency, but faster processing |
+| Offline Usage | Fully offline capable | Requires internet connection |
+| **Operational Considerations** |
+| Hardware Requirements | Significant local resources needed | Minimal local resources |
+| Maintenance | Self-maintained | Managed service |
+| Scalability | Limited by hardware | Easily scalable |
+| Updates | Manual updates required | Automatic updates |
+| **Cost Structure** |
+| Pricing Model | One-time hardware cost | Pay-per-use or subscription |
+| Budget Predictability | Predictable (fixed costs) | Variable based on usage |
+| Long-term Cost | Higher upfront, lower ongoing | Lower upfront, potentially higher ongoing |
+| **Integration & Support** |
+| API Documentation | Open source documentation | Commercial documentation |
+| Support | Community support | Commercial support |
+| Integration Complexity | Requires more integration work | Well-documented API |
+| **Pros & Cons Summary** |
+| Pros | • Complete data control<br>• No ongoing API costs<br>• No dependency on third parties<br>• No internet requirement | • Better performance<br>• Lower hardware requirements<br>• Managed service<br>• Always updated<br>• EU-based company |
+| Cons | • Higher hardware requirements<br>• Potentially lower performance<br>• Manual maintenance<br>• Limited by local resources | • Ongoing costs<br>• Internet dependency<br>• Less direct control over data<br>• Subject to service changes |
+| **Recommended For** | • Maximum data privacy requirements<br>• Fixed budget constraints<br>• Environments with limited internet | • Better performance needs<br>• Limited local hardware<br>• Scalability requirements<br>• Ease of maintenance priority |
+
+```
+
+
+# docs\temp\prompt_engineering.md
+```markdown
+
+
+Improve the prompt engineering for Mistral AI:
+
+Refine the system prompt in the chat endpoint
+Adjust temperature and other generation parameters
+```
+
+
+# docs\temp\requirements-table.md
+```markdown
+| Requirement ID | Category | Description | Priority | Notes |
+|--------------|----------|-------------|----------|-------|
+| **Deployment Requirements** |
+| DEP-1 | Environment | System should be deployable in an academic setting | High | |
+| DEP-2 | Platform | Solution should be platform-independent | High | |
+| DEP-3 | Hosting | System should be deployable to cloud services | High | |
+| DEP-4 | Scale | Support approximately 1000 pages of text documents | Medium | |
+| DEP-5 | Containerization | Use Docker for containerization and deployment | High | |
+| DEP-6 | Deployment Ease | Easy deployment and testing process | High | |
+| DEP-7 | Scalability | Scalable to hundreds of users | Medium | |
+| DEP-8 | Implementation | Simple Python-based deployment | Medium | |
+| DEP-9 | Evolution | Simple prototype-to-production path | Medium | |
+| **Document Management Requirements** |
+| DOC-1 | Access Control | Only admins can add or modify documents | High | |
+| DOC-2 | Ingestion | Documents added by placing text files in a watched folder | High | |
+| DOC-3 | Format | Focus on text files (.txt) as primary format | High | |
+| DOC-4 | External Processing | PDF and other formats handled as separate concern | Medium | |
+| DOC-5 | Update Frequency | Support infrequent updates (monthly/bimonthly) | Low | |
+| **User Interface Requirements** |
+| UI-1 | Access | Provide open access web interface (no authentication) | Medium | |
+| UI-2 | Interaction | Chat-based interface for document queries | High | |
+| UI-3 | References | Display source references for answers | High | |
+| UI-4 | Usability | Simple, intuitive interface for academic users | Medium | |
+| **RAG Implementation Requirements** |
+| RAG-1 | Vector Database | Use Weaviate for document storage and retrieval | High | |
+| RAG-2 | Text Processing | Chunk documents for better retrieval | High | |
+| RAG-3 | LLM Integration | Use locally installed Ollama with Llama models | High | |
+| RAG-4 | Context Creation | Format retrieved chunks as context for LLM | High | |
+| RAG-5 | Response Generation | Generate natural language responses from context | High | |
+| **Language Support Requirements** |
+| LANG-1 | Primary Language | Support Dutch as primary language | High | |
+| LANG-2 | Future Support | Architecture should allow adding English later | Medium | |
+| **Maintenance Requirements** |
+| MAINT-1 | Monitoring | Include basic system monitoring capabilities | Medium | |
+| MAINT-2 | Logging | Implement comprehensive logging | Medium | |
+| MAINT-3 | Documentation | Provide maintenance documentation | High | |
+| MAINT-4 | System Health | Include health check endpoints | Low | |
+| **Architecture Requirements** |
+| ARCH-1 | Components | Modular component-based architecture | High | |
+| ARCH-2 | Data Privacy | All components run locally, no data leaves system | High | |
+| ARCH-3 | Documentation | Mermaid diagrams for system visualization | Medium | |
+| ARCH-4 | Extensibility | Support future enhancements and integrations | Medium | |
+| ARCH-5 | Open Source | Use open source components wherever possible | High | |
+| ARCH-6 | Self-hosting | Self-hostable components for maximum control | High | |
+| ARCH-7 | Document Handling | Ability to scale well with large documents | Medium | |
+| **EU Compliance Requirements** |
+| EU-1 | Data Sovereignty | Full EU data sovereignty | High | |
+| EU-2 | GDPR | GDPR compliant architecture and processes | High | |
+| EU-3 | EU-based Services | EU-based solution components where cloud services are used | High | |
+| EU-4 | Transparency | Transparent pricing and data handling | Medium | |
+
+```
+
+
+# docs\temp\todo.md
 ```markdown
 ## Prototype Improvements
 - [ ] Improve chunking strategy
 - [ ] Fix any UI issues in the Streamlit interface
-- [ ] Improve error handling and user feedback
 - [ ] Enhance the document chunking strategy
 - [ ] Adjust vector search parameters for better retrieval
 - [ ] Improve prompt engineering for Mistral AI
-- [ ] Add basic document statistics (count, size, etc.)
-- [ ] Create a simple admin view for document management
-- [ ] Add basic chat history persistence
-
-## Documentation Updates
-- [ ] Update architecture diagrams to reflect Mistral AI instead of Ollama
-- [ ] Document the current prototype setup and components
-- [ ] Create a simple user guide for the prototype
-- [ ] Document known issues and limitations
-- [ ] Add code comments to explain complex sections
-
-## Optional Enhancements (After Stable Prototype)
-- [ ] Add support for basic PDF text extraction
-- [ ] Implement simple metadata for documents
-- [ ] Add response caching to reduce API costs
-- [ ] Create a simple visualization for document relationships
-- [ ] Improve source citation format
-- [ ] Add simple analytics on query performance
-
-## High Priority Tasks
 
 ### Production Web Interface
 - [ ] Complete the web-production folder implementation
@@ -1232,6 +1316,7 @@ Adjust temperature and other generation parameters
 - [ ] Set up Nginx configuration for static files and API proxying
 - [ ] Implement responsive design for mobile compatibility
 - [ ] Add proper error handling for network issues
+- [ ] creat a startup bash script
 
 ### Document Management Enhancements
 - [ ] Add support for additional file formats (PDF, DOCX)
@@ -1247,8 +1332,6 @@ Adjust temperature and other generation parameters
 - [ ] Create system health dashboard
 - [ ] Document production deployment process
 
-## Medium Priority Tasks
-
 ### User Experience Improvements
 - [ ] Enhance source citation format with page numbers
 - [ ] Add filtering options for documents by category/date
@@ -1257,7 +1340,6 @@ Adjust temperature and other generation parameters
 - [ ] Create user preference settings (dark mode, etc.)
 
 ### Performance Optimization
-- [ ] Add response caching to reduce Mistral API costs
 - [ ] Optimize chunk size and retrieval parameters
 - [ ] Implement batching for document processing
 - [ ] Add rate limiting and request queuing
@@ -1270,15 +1352,6 @@ Adjust temperature and other generation parameters
 - [ ] Set up proper CORS policies
 - [ ] Add content filtering for document ingestion
 
-## Low Priority / Future Tasks
-
-### Additional Features
-- [ ] Add document metadata search capabilities
-- [ ] Implement simple analytics on usage patterns
-- [ ] Create admin dashboard for system monitoring
-- [ ] Add multi-language support beyond Dutch
-- [ ] Implement "suggested questions" based on document content
-
 ### Integration Options
 - [ ] Add email notification functionality
 - [ ] Create webhook support for external systems
@@ -1288,7 +1361,7 @@ Adjust temperature and other generation parameters
 ```
 
 
-# docs\weviate_mistral_api.md
+# docs\temp\weviate_mistral_api.md
 ```markdown
 Mistral Generative AI with Weaviate
 Weaviate's integration with Mistral's APIs allows you to access their models' capabilities directly from Weaviate.
@@ -1662,6 +1735,801 @@ Once the integrations are configured at the collection, the data management and 
 
 The how-to: manage data guides show how to perform data operations (i.e. create, update, delete).
 The how-to: search guides show how to perform search operations (i.e. vector, keyword, hybrid) as well as retrieval augmented generation.
+```
+
+
+# docs\workflows\document-processing.md
+```markdown
+# Document Processing Workflow
+
+This document explains how the system processes text files from ingestion to indexing.
+
+## Overview
+
+The document processing workflow is designed to be simple and automated. Administrators only need to place text files in a designated folder, and the system handles the rest.
+
+```
+User adds text file → File detection → Text chunking → Vector embedding → Storage in database
+```
+
+### Sequence Diagram
+
+The following sequence diagram illustrates the document processing workflow:
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant Folder as Watched Folder
+    participant Processor as Document Processor
+    participant Chunker as Text Chunker
+    participant Weaviate as Vector Database
+    participant Embedder as Text2Vec-Transformers
+    
+    Admin->>Folder: Add/modify .txt file
+    Folder-->>Processor: File change event
+    
+    Processor->>Processor: Validate file & detect encoding
+    
+    Processor->>Folder: Read file content
+    Folder-->>Processor: Return text content
+    
+    Processor->>Weaviate: Delete existing chunks (if any)
+    Weaviate-->>Processor: Confirm deletion
+    
+    Processor->>Chunker: Send text for chunking
+    Chunker->>Chunker: Split text with overlap
+    Chunker-->>Processor: Return text chunks
+    
+    loop For each chunk
+        Processor->>Weaviate: Store chunk with metadata
+        Weaviate->>Embedder: Request vector embedding
+        Embedder->>Embedder: Generate embedding
+        Embedder-->>Weaviate: Return vector embedding
+        Weaviate->>Weaviate: Index chunk with vector
+        Weaviate-->>Processor: Confirm storage
+    end
+    
+    Processor->>Processor: Update processing tracker
+    
+    Note over Processor,Weaviate: Document is now searchable
+```
+
+## Detailed Workflow
+
+### 1. File Detection
+
+The system uses the Python `watchdog` library to monitor a designated folder for changes:
+
+- New files: Processed and indexed
+- Modified files: Re-processed and re-indexed
+- Deleted files: Removed from the index
+
+The processor tracks file modification times to avoid redundant processing.
+
+### 2. Text Preprocessing
+
+When a text file is detected:
+
+1. File encoding is detected automatically
+2. Text content is read into memory
+3. Any existing chunks for this file are deleted from the database
+
+### 3. Text Chunking
+
+Text is split into manageable chunks for more precise retrieval:
+
+- Default chunk size: 1,000 characters
+- Default overlap: 200 characters
+- Chunking attempts to preserve paragraph boundaries where possible
+
+The chunking strategy balances:
+- Small enough chunks for precise retrieval
+- Large enough chunks for sufficient context
+- Overlapping content to avoid missing information at boundaries
+
+### 4. Vector Database Storage
+
+Each chunk is stored in Weaviate with:
+
+- **content**: The actual text content
+- **filename**: Source document name
+- **chunkId**: Sequential number within the document
+
+A consistent UUID is generated for each chunk based on filename and chunk ID, ensuring that updates to existing files replace the correct chunks.
+
+### 5. Embedding Generation
+
+The Text2Vec-Transformers module in Weaviate automatically generates vector embeddings for each chunk, which are used for semantic similarity searches.
+
+## Handling Errors
+
+The processor includes several error handling mechanisms:
+
+- File encoding detection attempts multiple encodings
+- Processing errors for one file don't stop the entire workflow
+- Failed processing attempts are logged with detailed error information
+- The system continues monitoring even after errors
+
+## Monitoring and Logs
+
+The processor logs detailed information about its operations:
+
+- File detection events
+- Processing steps and timing
+- Chunk statistics
+- Errors and warnings
+
+These logs can be viewed with:
+
+```bash
+docker-compose logs -f processor
+```
+
+## Document Verification
+
+To verify that documents are properly processed and stored, you can:
+
+1. Check the API statistics endpoint: `http://localhost:8000/statistics`
+2. Run the `document_storage_verification.py` script in the `tests` directory
+3. Query the system about content from your documents
+
+## Performance Considerations
+
+- Processing time scales with document size
+- The default chunk size works well for most documents
+- Very large files (>1MB) may take longer to process
+- The system is designed to handle documents in the background without blocking user queries
+```
+
+
+# docs\workflows\query-processing.md
+```markdown
+# Query Processing Workflow
+
+This document explains how the system processes user queries and generates responses.
+
+## Overview
+
+The Query Processing workflow follows the Retrieval-Augmented Generation (RAG) pattern:
+
+```
+User query → Vector search → Context formation → LLM generation → Response with sources
+```
+
+### Sequence Diagram
+
+The following sequence diagram illustrates the document processing workflow:
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant WebUI as Web Interface
+    participant API as API Service
+    participant Cache as Response Cache
+    participant Weaviate as Vector Database
+    participant Embedder as Text2Vec-Transformers
+    participant Mistral as Mistral AI
+
+    User->>WebUI: Submit question
+    WebUI->>API: POST /chat with question
+    
+    API->>API: Generate request ID
+    API->>API: Check rate limits
+    
+    API->>Cache: Check for cached response
+    alt Cache hit
+        Cache-->>API: Return cached response
+        API-->>WebUI: Return response with sources
+        WebUI-->>User: Display answer with sources
+    else Cache miss
+        Cache-->>API: No cached response
+        
+        API->>API: Check token budget
+        
+        API->>Weaviate: Search for relevant chunks
+        Weaviate->>Embedder: Convert query to vector
+        Embedder-->>Weaviate: Return query vector
+        Weaviate->>Weaviate: Perform vector similarity search
+        Weaviate-->>API: Return top matching chunks
+        
+        API->>API: Format chunks as context
+        
+        API->>Mistral: Send prompt with context and question
+        Mistral->>Mistral: Generate response
+        Mistral-->>API: Return generated text
+        
+        API->>API: Format final response with sources
+        API->>API: Track token usage
+        
+        API->>Cache: Store response in cache
+        Cache-->>API: Confirm storage
+        
+        API-->>WebUI: Return response with sources
+        WebUI-->>User: Display answer with sources
+    end
+```
+
+## Detailed Workflow
+
+### 1. User Query Submission
+
+The workflow begins when a user submits a question through the web interface. The query is sent to the API's `/chat` endpoint as a JSON payload.
+
+### 2. API Processing
+
+When the API receives a query:
+
+1. A unique request ID is generated for tracing
+2. Rate limit checks are performed
+3. Token budget availability is verified
+4. Cache is checked for identical previous queries
+
+### 3. Vector Search
+
+If the query passes initial checks:
+
+1. The query is vectorized (automatically by Weaviate)
+2. A semantic similarity search finds the most relevant document chunks
+3. The top 3 most relevant chunks are retrieved (default setting)
+
+### 4. Context Formation
+
+The retrieved chunks are formatted into a context prompt:
+
+```
+Context:
+[Content of chunk 1]
+
+[Content of chunk 2]
+
+[Content of chunk 3]
+
+Question: [Original user query]
+```
+
+### 5. LLM Generation
+
+The context and query are sent to Mistral AI:
+
+1. A system prompt establishes the assistant's role
+2. The formatted context and query are sent as user message
+3. Temperature is set to 0.7 (balanced creativity/consistency)
+4. Token usage is tracked for budget management
+
+### 6. Response Formation
+
+When the LLM generates a response:
+
+1. The answer is extracted
+2. Source information (filenames and chunk IDs) is added
+3. The complete response is sent back to the frontend
+4. The response is cached for future identical queries
+
+### 7. User Presentation
+
+The web interface:
+
+1. Displays the generated answer
+2. Shows source citations
+3. Adds the interaction to the conversation history
+
+## Error Handling
+
+The system includes robust error handling:
+
+- **Rate limiting**: If too many requests arrive, users receive a friendly message
+- **Token budget**: If the daily budget is exceeded, users are informed
+- **API errors**: Transient errors trigger automatic retries
+- **Timeouts**: Long-running requests have appropriate timeouts
+
+## Caching Mechanism
+
+To improve performance and reduce API costs:
+
+- Responses are cached for 1 hour
+- Cache keys combine the query text and context hash
+- Cache size is limited to 100 entries
+- Oldest entries are removed when the cache is full
+
+## Budget Management
+
+The system carefully manages Mistral API usage:
+
+- Daily token budget is configurable (default: 10,000 tokens)
+- Token usage is reset daily
+- Requests are estimated and checked against remaining budget
+- Actual usage is tracked after completion
+
+## Performance Optimization
+
+To optimize performance:
+
+- Rate limiting prevents API overload
+- Response caching reduces duplicate work
+- Context is limited to the most relevant chunks
+- Token usage is carefully balanced against response quality
+
+## Monitoring and Logging
+
+Each step of the process is logged with the request ID:
+
+- Query reception
+- Vector search results
+- Context formation
+- LLM generation timing
+- Token usage
+- Cache hits/misses
+- Errors and retries
+
+These logs provide valuable insights for debugging and optimization.
+```
+
+
+# docs\architecture.md
+```markdown
+# System Architecture
+
+This document provides a comprehensive overview of the EU-Compliant Document Chat system architecture.
+
+## System Overview
+
+The system is designed as a modular, containerized application that allows users to query documents using natural language. It follows a Retrieval-Augmented Generation (RAG) pattern, where:
+
+1. Documents are processed and stored as vector embeddings
+2. User queries are vectorized and used to retrieve relevant document chunks
+3. Retrieved chunks are sent to an LLM along with the original query to generate an informed response
+4. Responses include source citations to maintain transparency
+
+## Technology Stack
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Vector Database** | Weaviate | Stores and searches document embeddings |
+| **Text Embeddings** | text2vec-transformers | Converts text to vector embeddings |
+| **LLM Provider** | Mistral AI | Generates responses based on retrieved context |
+| **Backend API** | FastAPI | Handles requests, orchestrates RAG process |
+| **Document Processor** | Python/watchdog | Monitors and processes new text documents |
+| **Prototype Frontend** | Streamlit | Provides user chat interface |
+| **Production Frontend** | HTML/JS + Nginx | Lightweight production web interface |
+| **Containerization** | Docker | Packages all components for deployment |
+| **Production Hosting** | Hetzner | EU-based cloud provider for production |
+
+## Core Components
+
+### Document Processor
+
+- **Purpose**: Monitors folder for new text files, chunks text, and indexes in vector database
+- **Technology**: Python with watchdog library
+- **Location**: Runs in dedicated container, watches mounted volume
+
+### Vector Database
+
+- **Purpose**: Stores document chunks as vector embeddings for semantic search
+- **Technology**: Weaviate (Dutch company, GDPR compliant)
+- **Features**: Vector search, metadata filtering, scalable storage
+
+### API Service
+
+- **Purpose**: Orchestrates the RAG workflow, connecting frontend, database, and LLM
+- **Technology**: FastAPI (Python)
+- **Key Features**: Token budget management, rate limiting, caching, error handling
+
+### Language Model
+
+- **Purpose**: Generates natural language responses based on retrieved context
+- **Technology**: Mistral AI (French company, GDPR compliant)
+- **Security**: API-based access, no data retention
+
+### Web Interface
+
+- **Prototype**: Streamlit-based interface for development and testing
+- **Production**: Nginx serving static HTML/JS application
+- **Features**: Chat interface, source citations, system status information
+
+## Data Flow
+
+1. **Document Ingestion**:
+   - Admin adds text files to watched folder
+   - Processor detects changes, reads files
+   - Text is chunked and stored in Weaviate with metadata
+   - Embeddings are generated by text2vec-transformers
+
+2. **Query Processing**:
+   - User submits question through web interface
+   - API receives query and converts to vector embedding
+   - Weaviate performs similarity search
+   - Top relevant chunks are retrieved
+   - Chunks are formatted as context
+   - Context and query are sent to Mistral AI
+   - Response is generated and returned with sources
+
+## Security and Compliance
+
+- All components run within Docker environment
+- Data remains within system boundaries
+- All providers are EU-based
+- Built-in rate limiting and token budget controls
+- Stateless design with minimal data retention
+
+## Deployment Architecture
+
+The system is deployed as Docker containers, making it portable across environments. For production, it's hosted on Hetzner (German cloud provider) to maintain EU data sovereignty.
+
+![Architecture Diagram](diagrams/architecture-diagram.svg)
+
+## Class Structure
+
+For developers who need to understand the code organization, the system follows this class structure:
+
+[Reference to detailed class diagram in diagrams folder]
+
+## Future Architecture Considerations
+
+- Scaling vector database for larger document collections
+- Adding authentication for multi-tenant usage
+- Implementing finer-grained permission controls
+- Supporting additional document formats (PDF, DOCX)
+- Adding a feedback loop for response quality improvement
+```
+
+
+# docs\deployment-guide.md
+```markdown
+# Deployment Guide
+
+This guide provides instructions for deploying the EU-Compliant Document Chat system in various environments.
+
+## Local Deployment
+
+### Prerequisites
+
+- **Windows users**: Update Windows Subsystem for Linux
+  ```bash
+  wsl --update
+- Docker and Docker Compose installed (See [Get Docker](https://docs.docker.com/get-started/get-docker/))
+- At least 4GB of available RAM
+- Mistral AI API key ([Sign up here](https://console.mistral.ai/))
+
+### Steps
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/ducroq/doc-chat.git
+   cd doc-chat
+   ```
+
+2. **Configure environment variables**:
+   Create a `.env` file in the root directory with:
+   ```
+   WEAVIATE_URL=http://weaviate:8080
+   MISTRAL_API_KEY=your_api_key_here
+   MISTRAL_MODEL=mistral-tiny
+   MISTRAL_DAILY_TOKEN_BUDGET=10000
+   MISTRAL_MAX_REQUESTS_PER_MINUTE=10
+   ```
+
+3. **Start the system**:
+   
+   On Windows:
+   ```powershell
+   .\start.ps1
+   ```
+   
+   On Linux/macOS:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. **Access the interfaces**:
+   - Web interface: http://localhost:8501
+   - API documentation: http://localhost:8000/docs
+   - Weaviate console: http://localhost:8080
+
+5. **Add documents**:
+   Place .txt files in the `data/` directory.
+
+## Production Deployment (Hetzner)
+
+### Prerequisites
+
+- Hetzner Cloud account
+- Domain name (optional, for HTTPS)
+- SSH key registered with Hetzner
+
+### Server Sizing
+
+Recommended server configuration:
+- CX31 (4 vCPU, 8GB RAM)
+- Ubuntu 22.04
+- 40GB SSD (minimum)
+
+### Setup Steps
+
+1. **Create server**:
+   Create a new server in Hetzner Cloud with the recommended configuration.
+
+2. **Install Docker**:
+   ```bash
+   ssh root@your-server-ip
+   apt update && apt upgrade -y
+   apt install -y docker.io docker-compose
+   ```
+
+3. **Clone repository**:
+   ```bash
+   git clone https://github.com/ducroq/doc-chat.git
+   cd doc-chat
+   ```
+
+4. **Configure environment variables**:
+   ```bash
+   nano .env
+   ```
+   Add the following content:
+   ```
+   WEAVIATE_URL=http://weaviate:8080
+   MISTRAL_API_KEY=your_api_key_here
+   MISTRAL_MODEL=mistral-small
+   MISTRAL_DAILY_TOKEN_BUDGET=50000
+   MISTRAL_MAX_REQUESTS_PER_MINUTE=10
+   ```
+
+5. **Adjust docker-compose.yml** (optional):
+   For production, replace the prototype web interface with the production one:
+   ```bash
+   nano docker-compose.yml
+   ```
+   Comment out the `web-prototype` service and uncomment the `web-production` service.
+
+6. **Start the system**:
+   ```bash
+   docker-compose up -d
+   ```
+
+7. **Set up a domain** (optional):
+   To use HTTPS, set up DNS to point to your server's IP address, then install Certbot for SSL:
+   ```bash
+   apt install -y certbot python3-certbot-nginx
+   certbot --nginx -d yourdomain.com
+   ```
+
+8. **Create a data volume** (recommended):
+   For data persistence:
+   ```bash
+   docker volume create doc_chat_data
+   ```
+   Update your docker-compose.yml to use this volume for the data directory.
+
+## Backup and Maintenance
+
+### Backup Weaviate Data
+
+```bash
+# Stop the containers
+docker-compose down
+
+# Backup the Weaviate data volume
+docker run --rm -v weaviate_data:/data -v $(pwd)/backups:/backups ubuntu tar -czvf /backups/weaviate_backup_$(date +%Y%m%d).tar.gz /data
+
+# Restart the containers
+docker-compose up -d
+```
+
+### Update the System
+
+```bash
+# Pull latest changes
+git pull
+
+# Rebuild and restart
+docker-compose down
+docker-compose build
+docker-compose up -d
+```
+
+## Monitoring
+
+### Viewing Logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f api
+```
+
+### Health Checks
+
+```bash
+# Check API status
+curl http://localhost:8000/status
+
+# Check document count
+curl http://localhost:8000/documents/count
+
+# Detailed statistics
+curl http://localhost:8000/statistics
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Weaviate not starting**:
+   - Check RAM availability
+   - Verify port 8080 is not in use
+   - Check logs: `docker-compose logs weaviate`
+
+2. **Document processor not detecting files**:
+   - Ensure files are .txt format
+   - Check permissions on data directory
+   - Verify processor logs: `docker-compose logs processor`
+
+3. **API connection errors**:
+   - Confirm Mistral API key is valid
+   - Check network connectivity
+   - Verify token budget hasn't been exhausted
+
+### Restarting Services
+
+```bash
+# Restart a specific service
+docker-compose restart api
+
+# Reset Weaviate data (caution: deletes all indexed documents)
+docker-compose down
+docker volume rm doc_chat_weaviate_data
+docker-compose up -d
+```
+
+## Security Considerations
+
+- Keep your Mistral API key secure
+- Limit access to the server using firewall rules
+- Consider implementing authentication for production
+- Regularly update the system and dependencies
+- Monitor logs for unusual activity
+```
+
+
+# docs\developer-guide.md
+```markdown
+
+```
+
+
+# docs\user-guide.md
+```markdown
+# User Guide
+
+This guide explains how to use the EU-Compliant Document Chat system to interact with your documents.
+
+## Introduction
+
+The Document Chat system allows you to ask questions about text documents in natural language. The system will search through your documents and provide relevant answers with source citations.
+
+## Accessing the System
+
+Access the web interface through your browser:
+
+- **Development environment**: http://localhost:8501
+- **Production environment**: http://your-domain.com (or IP address)
+
+The interface has a clean, chat-based design that's intuitive to use.
+
+## Asking Questions
+
+1. **Type your question** in the input field at the bottom of the screen
+2. **Press Enter** or click the send button
+3. The system will process your question and provide an answer
+
+### Example Questions
+
+Good questions are specific and relate to content in the documents:
+
+- "What are the key features of the RAG system?"
+- "How does the document processor handle text chunking?"
+- "What authentication methods are supported?"
+- "Explain the token budget management"
+
+## Understanding Responses
+
+The system provides:
+
+1. **Answer**: Generated text that addresses your question
+2. **Sources**: References to the specific documents and chunks used to generate the answer
+
+Example response:
+
+```
+The document processor chunks text into segments of approximately 1000 characters with 200 character overlap. This chunking strategy balances the need for chunks that are small enough for precise retrieval but large enough to provide adequate context.
+
+Sources:
+• processor.py (Chunk 3)
+• docs/document_processing.md (Chunk 2)
+```
+
+### Source Citations
+
+Source citations help you:
+- Verify the information is correct
+- Find more context in the original documents
+- Understand where the answer is coming from
+
+## Conversation History
+
+Your conversation history is preserved during your session. You can:
+
+- Scroll up to view previous questions and answers
+- Ask follow-up questions that reference previous answers
+- Start a new session by refreshing the page
+
+## System Status
+
+The sidebar shows the status of system components:
+
+- ✅ API Service: Connected
+- ✅ Vector Database: Connected
+- ✅ LLM Service: Configured
+
+If you see any ❌ error indicators, the system may not be fully operational.
+
+## Best Practices
+
+### For Better Results
+
+1. **Be specific**: Ask clear, focused questions
+2. **Use natural language**: You don't need special syntax
+3. **Check sources**: Review the cited documents for more context
+4. **Ask follow-ups**: If an answer is incomplete, ask for more details
+
+### When You Don't Get Good Results
+
+If the system doesn't provide a good answer:
+
+1. **Rephrase your question**: Try asking in a different way
+2. **Be more specific**: Add more details to your question
+3. **Verify content exists**: Make sure the information is in your documents
+4. **Check system status**: Ensure all components are working
+
+## Limitations
+
+The system has some limitations to be aware of:
+
+- **Only knows what's in your documents**: It doesn't have general knowledge
+- **Text files only**: Currently only processes .txt files
+- **May not connect concepts**: Sometimes misses connections between different documents
+- **Response rate limits**: There are limits on how many questions can be asked per minute
+- **Token budget**: There's a daily limit on total usage
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Slow responses**: During peak times or with complex questions, responses may take longer
+2. **Error messages**: If you see an error, try again after a short wait
+3. **Incorrect answers**: Always verify with the source documents
+4. **"I don't know" responses**: The information may not be in the documents
+
+### Reporting Problems
+
+If you encounter persistent issues:
+
+1. Note the specific question that caused the problem
+2. Capture any error messages
+3. Contact your system administrator
+
+## Privacy & Data Protection
+
+The EU-Compliant Document Chat system is designed with privacy in mind:
+
+- All data processing occurs within the system boundaries
+- No user queries or document data are stored long-term
+- The system uses EU-based service providers (Weaviate, Mistral AI)
+- Complies with GDPR and other EU data protection regulations
+
+Your conversations are not used to train AI models and are not shared with third parties.
 ```
 
 
@@ -3247,388 +4115,84 @@ httpx==0.28.1
 
 # README.md
 ```markdown
-# RAG System with Folder Watching
+# EU-Compliant Document Chat System
 
-## Introduction
+A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academic environments to securely query document collections.
 
-EU-compliant document-based Retrieval-Augmented Generation (RAG) system designed for academic environments:
-- Admins add text (.txt) files to a watched folder
-- Documents are automatically processed and indexed
-- End-users can query the documents through a web interface
+![Simplified Architecture](docs/diagrams/architecture-diagram.svg)
 
-By using Docker and standardized components, the system can be easily deployed to different environments while maintaining consistency and compliance.
+## Key Features
 
-### Key design decisions
+- **EU Data Sovereignty**: All components comply with EU data protection regulations
+- **Simple Document Management**: Add text files to a watched folder for automatic processing
+- **Natural Language Querying**: Ask questions about your documents in natural language
+- **Source Citations**: All answers include references to source documents
+- **GDPR Compliance**: Built with privacy by design principles
 
-After evaluating multiple options across aspects like privacy, maintenance, scalability, and costs, we selected:
+## Technology Stack
 
-- **Weaviate** (Dutch) for vector database - providing EU-based, self-hostable vector search
-- **Mistral AI** (French) for LLM services - offering EU-compliant language model capabilities
-- **FastAPI** for backend - enabling efficient API development with Python
-- **Streamlit** for prototype frontend - allowing rapid UI development (production on Hetzner)
-- **Docker** for containerization - ensuring consistent deployment across environments
+- **Vector Database**: Weaviate (Netherlands-based)
+- **LLM Provider**: Mistral AI (France-based)
+- **Backend**: FastAPI (Python)
+- **Frontend**: Streamlit (prototype) and Nginx/HTML/JS (production)
+- **Deployment**: Docker containers on Hetzner (German cloud provider)
 
-### Key advantages
+## Quick Start
 
-- Full EU data sovereignty
-- GDPR compliance by design
-- Open source components where possible
-- Scalable to hundreds of users
-- Simple Python-based deployment
-- Text-only document processing for simplicity
+### Prerequisites
 
-## Prerequisites
+- Docker and Docker Compose
+- At least 4GB of available RAM
+- Mistral AI API key
 
-- On Windows, update the subsystem for Linux
-    ```bash
-    wsl --update
-    ```
-- Install [Docker](https://docs.docker.com/get-started/get-docker/).
+### Installation
 
-## Technology stack
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/yourusername/doc-chat.git
+   cd doc-chat
+   ```
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Vector Database** | Weaviate | Stores and searches document embeddings |
-| **Text Embeddings** | text2vec-transformers | Converts text to vector embeddings |
-| **LLM Provider** | Mistral AI | Generates responses based on retrieved context |
-| **Backend API** | FastAPI | Handles requests, orchestrates RAG process |
-| **Document Processor** | Python/watchdog | Monitors and processes new text documents |
-| **Prototype Frontend** | Streamlit | Provides user chat interface |
-| **Production Frontend** | HTML/JS + Nginx | Lightweight production web interface |
-| **Containerization** | Docker | Packages all components for deployment |
-| **Production Hosting** | Hetzner | EU-based cloud provider for production |
+2. Create a `.env` file with your Mistral AI credentials:
+   ```
+   WEAVIATE_URL=http://weaviate:8080
+   MISTRAL_API_KEY=your_api_key_here
+   MISTRAL_MODEL=mistral-tiny
+   MISTRAL_DAILY_TOKEN_BUDGET=10000
+   MISTRAL_MAX_REQUESTS_PER_MINUTE=10
+   ```
 
-## Project structure
+3. Start the system:
+   ```bash
+   # On Windows
+   .\start.ps1
+   
+   # On Linux/macOS
+   docker-compose up -d
+   ```
 
-```
-doc-chat/
-├── docker-compose.yml
-├── .env
-├── data/                  # Watched folder for text documents
-├── docs/                  # Project documentation
-├── processor/             # Document processor service
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── processor.py
-├── api/                   # API service
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── main.py
-├── web-prototype/         # Streamlit prototype
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── app.py
-└── web-production/        # Production web interface
-    ├── Dockerfile
-    ├── static/
-    ├── index.html
-    └── nginx.conf
-```
+4. Access the interfaces:
+   - Web interface: http://localhost:8501
+   - API documentation: http://localhost:8000/docs
+   - Weaviate console: http://localhost:8080
 
-## Architecture
+### Adding Documents
 
-![Simplified RAG System with Folder-Based Document Ingestion](docs/architecture-diagram.svg)
+Simply place .txt files in the `data/` directory. The system will automatically process and index them.
 
-### Class diagram
+## Documentation
 
-```mermaid
-classDiagram
-    class DocumentProcessor {
-        +process_documents()
-        +watch_folder()
-        +handle_file_change(event)
-        +chunk_text(text, max_size, overlap)
-        +add_document_to_weaviate(file_path)
-    }
-    
-    class FileWatcher {
-        +start()
-        +stop()
-        +on_created(event)
-        +on_modified(event)
-    }
-    
-    class TextChunker {
-        +chunk_text(text, max_size, overlap)
-        +create_chunks_from_paragraphs()
-    }
-    
-    class WeaviateClient {
-        +setup_schema()
-        +add_chunk(chunk_data, uuid)
-        +search_similar(query, limit)
-        +get_document_by_id(id)
-    }
-    
-    class APIService {
-        +chat_endpoint(query)
-        +search_documents(query)
-        +generate_response(context, query)
-    }
-    
-    class WebServer {
-        +serve_static_files()
-        +proxy_api_requests()
-    }
-    
-    class OllamaClient {
-        +generate_completion(prompt, model)
-        +get_models()
-    }
-    
-    class Document {
-        +String filename
-        +String content
-        +DateTime added_date
-    }
-    
-    class DocumentChunk {
-        +String content
-        +String filename
-        +Int chunk_id
-        +Vector embedding
-    }
-    
-    class UserQuery {
-        +String question
-        +process()
-    }
-    
-    class SystemResponse {
-        +String answer
-        +Array sources
-    }
-    
-    DocumentProcessor --> FileWatcher : uses
-    DocumentProcessor --> TextChunker : uses
-    DocumentProcessor --> WeaviateClient : uses
-    DocumentProcessor --> Document : processes
-    Document --> DocumentChunk : split into
-    
-    APIService --> WeaviateClient : searches
-    APIService --> OllamaClient : prompts
-    APIService --> UserQuery : handles
-    APIService --> SystemResponse : produces
-    
-    WebServer --> APIService : forwards requests to
-```
+For more detailed information about the system, check the following documentation:
 
-### Document processing flow
+- [Architecture Overview](docs/architecture.md)
+- [Deployment Guide](docs/deployment-guide.md)
+- [User Guide](docs/user-guide.md)
+- [Developer Guide](docs/developer-guide.md)
 
-```mermaid
-sequenceDiagram
-    actor Admin
-    participant Folder as Watched Folder
-    participant Processor as Document Processor
-    participant Chunker as Text Chunker
-    participant Weaviate as Vector Database
-    
-    Admin->>Folder: Add .txt file
-    Folder->>Processor: File change event
-    Processor->>Processor: Read file
-    Processor->>Chunker: Send text content
-    Chunker->>Chunker: Split into chunks
-    loop For each chunk
-        Processor->>Weaviate: Store chunk with metadata
-        Weaviate->>Weaviate: Generate embedding
-        Weaviate->>Weaviate: Index chunk
-        Weaviate-->>Processor: Confirm storage
-    end
-    Processor-->>Folder: Continue watching
-    
-    Note over Weaviate: Document is now searchable
-```
+## License
 
-### Query processing flow
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant WebUI as Web Interface
-    participant API as API Service
-    participant Weaviate as Vector Database
-    participant Ollama as LLM Service
-    
-    User->>WebUI: Ask question
-    WebUI->>API: POST /chat with question
-    API->>Weaviate: Search for relevant chunks
-    Weaviate->>Weaviate: Perform vector similarity search
-    Weaviate-->>API: Return top matching chunks
-    
-    API->>API: Format chunks as context
-    API->>Ollama: Send prompt with context
-    Ollama->>Ollama: Generate response
-    Ollama-->>API: Return generated text
-    
-    API->>API: Format final response with sources
-    API-->>WebUI: Return JSON response
-    WebUI-->>User: Display answer and sources
-```
-
-### RAG system component diagram
-
-```mermaid
-flowchart TD
-    subgraph Host["Host Machine"]
-        subgraph DocProc["Document Processor"]
-            FileWatcher["File Watcher\n(watchdog)"]
-            TextReader["Text Reader"]
-            TextChunker["Text Chunker"]
-            WeaviateClient1["Weaviate Client"]
-        end
-        
-        subgraph Docker["Docker Environment"]
-            subgraph VectorDB["Vector Database"]
-                Weaviate["Weaviate"]
-                TextVectorizer["Text2Vec Transformer"]
-            end
-            
-            subgraph APIService["API Service"]
-                FastAPI["FastAPI"]
-                Endpoints["Query Endpoints"]
-                WeaviateClient2["Weaviate Client"]
-                LLMClient["LLM Client"]
-            end
-            
-            subgraph WebInterface["Web Interface"]
-                Nginx["Nginx Server"]
-                StaticFiles["Static Files"]
-                ChatUI["Chat UI"]
-                APIProxy["API Proxy"]
-            end
-        end
-        
-        subgraph Ollama["LLM Service (Ollama)"]
-            LlamaModel["Llama Model"]
-        end
-        
-        DocsFolder["/docs Folder"]
-    end
-    
-    User["End User"]
-    Admin["Admin"]
-    
-    %% Connections
-    Admin -->|"adds .txt files"| DocsFolder
-    FileWatcher -->|"monitors"| DocsFolder
-    FileWatcher -->|"file event"| TextReader
-    TextReader -->|"file content"| TextChunker
-    TextChunker -->|"text chunks"| WeaviateClient1
-    WeaviateClient1 -->|"store chunks"| Weaviate
-    Weaviate <-->|"generates embeddings"| TextVectorizer
-    
-    User -->|"interacts with"| ChatUI
-    ChatUI -->|"submits query"| APIProxy
-    APIProxy -->|"forwards request"| Endpoints
-    Endpoints -->|"searches"| WeaviateClient2
-    WeaviateClient2 -->|"vector search"| Weaviate
-    Endpoints -->|"prompts"| LLMClient
-    LLMClient -->|"completion request"| LlamaModel
-    LlamaModel -->|"generated text"| LLMClient
-    LLMClient -->|"response"| Endpoints
-    Endpoints -->|"JSON response"| APIProxy
-    APIProxy -->|"display answer"| ChatUI
-    
-    %% Styling
-    classDef process fill:#d1e7dd,stroke:#198754,stroke-width:1px
-    classDef storage fill:#e2e3e5,stroke:#212529,stroke-width:1px
-    classDef service fill:#cfe2ff,stroke:#0d6efd,stroke-width:1px
-    classDef ui fill:#f8d7da,stroke:#dc3545,stroke-width:1px
-    classDef user fill:#fff3cd,stroke:#664d03,stroke-width:1px
-    classDef llm fill:#e0cffc,stroke:#6f42c1,stroke-width:1px
-    
-    class DocProc,TextReader,TextChunker,FileWatcher,WeaviateClient1,WeaviateClient2,LLMClient,Endpoints process
-    class Weaviate,TextVectorizer,DocsFolder storage
-    class APIService,FastAPI service
-    class WebInterface,Nginx,StaticFiles,ChatUI,APIProxy ui
-    class User,Admin user
-    class Ollama,LlamaModel llm
-```
-
-### RAG system deployment diagram
-
-```mermaid
-flowchart TD
-    subgraph Host["Host Machine"]
-        subgraph DockerEnv["Docker Environment"]
-            subgraph ProcessorContainer["processor container"]
-                DocProcessor["Document Processor\n(Python)"]
-            end
-            
-            subgraph WeaviateContainer["weaviate container"]
-                Weaviate["Weaviate\n(Vector Database)"]
-            end
-            
-            subgraph TransformerContainer["t2v-transformers container"]
-                TextVectorizer["Text2Vec Transformer\n(NLP Model)"]
-            end
-            
-            subgraph APIContainer["api container"]
-                FastAPI["FastAPI Service\n(Python)"]
-            end
-            
-            subgraph WebContainer["web container"]
-                Nginx["Nginx\n(Web Server)"]
-                HTML["Static HTML/JS/CSS"]
-            end
-        end
-        
-        OllamaService["Ollama\n(Running on Host)"]
-        DocsVolume["./docs\n(Mounted Volume)"]
-        WeaviateVolume["weaviate_data\n(Docker Volume)"]
-    end
-    
-    Browser["User's Browser"]
-    
-    %% Connections
-    DocProcessor -->|"watches"| DocsVolume
-    DocProcessor -->|"stores embeddings"| Weaviate
-    Weaviate -->|"computes embeddings"| TextVectorizer
-    Weaviate <-->|"persists data"| WeaviateVolume
-    
-    FastAPI -->|"searches"| Weaviate
-    FastAPI -->|"prompt completion"| OllamaService
-    
-    Browser -->|"HTTP/HTTPS"| Nginx
-    Nginx -->|"serves"| HTML
-    Nginx -->|"proxies API calls"| FastAPI
-    
-    %% Styling
-    classDef container fill:#f5f5f5,stroke:#333,stroke-width:1px
-    classDef volume fill:#fff3cd,stroke:#664d03,stroke-width:1px
-    classDef service fill:#cfe2ff,stroke:#0d6efd,stroke-width:1px
-    classDef external fill:#f8d7da,stroke:#dc3545,stroke-width:1px
-    
-    class DockerEnv,ProcessorContainer,WeaviateContainer,TransformerContainer,APIContainer,WebContainer container
-    class DocsVolume,WeaviateVolume volume
-    class DocProcessor,Weaviate,TextVectorizer,FastAPI,Nginx,HTML,OllamaService service
-    class Browser external
-```
-
-## Docker compose
-
-Docker Compose is a tool that helps you define and manage multi-container Docker applications. In the doc chat system, the docker-compose.yml file defines three services:
-
-- A Weaviate vector database container
-- A FastAPI backend container
-- A Streamlit frontend container
-
-The file also specifies how these containers connect to each other, what ports they expose, and what environment variables they use. For instance, your backend depends on Weaviate, and your frontend depends on the backend.
-
-### Running the system
-
-On Windows, start the system by runnning the Power Shell script:
-
-```bash
-.\start.ps1
-```
-which builds and starts all three containers together. 
-
-Access:
-- Web interface: http://localhost:8501
-- API documentation: http://localhost:8000/docs
-- Weaviate console: http://localhost:8080
 
 
 ```

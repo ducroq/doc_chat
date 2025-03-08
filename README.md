@@ -8,6 +8,7 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
 
 - **EU Data Sovereignty**: All components comply with EU data protection regulations
 - **Simple Document Management**: Add text files to a watched folder for automatic processing
+- **Metadata Support**: Include bibliographic data for academic publications and other documents
 - **Natural Language Querying**: Ask questions about your documents in natural language
 - **Source Citations**: All answers include references to source documents
 - **GDPR Compliance**: Built with privacy by design principles
@@ -59,9 +60,32 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080
 
-### Adding Documents
+### Adding Documents with Metadata
 
-Simply place .txt files in the `data/` directory. The system will automatically process and index them.
+Simply place files in the `data/` directory. The system will automatically process and index them.
+
+1. Place your `.txt` files in the `data/` directory
+2. For each text file, create a corresponding metadata file with the same base name:
+   ```
+   data/
+   example.txt
+   example.metadata.json
+   ```
+3. Format the metadata file using a Zotero-inspired schema:
+   ```json
+   {
+   "itemType": "journalArticle",
+   "title": "Example Paper Title",
+   "creators": [
+      {"firstName": "John", "lastName": "Smith", "creatorType": "author"}
+   ],
+   "date": "2023",
+   "publicationTitle": "Journal Name",
+   "tags": ["tag1", "tag2"]
+   }
+   ```
+   
+The system will automatically associate metadata with documents and display it when providing answers.
 
 ## Documentation
 
