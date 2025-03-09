@@ -9,6 +9,7 @@ This guide provides instructions for deploying the EU-Compliant Document Chat sy
 - **Windows users**: Update Windows Subsystem for Linux
   ```bash
   wsl --update
+  ```
 - Docker and Docker Compose installed (See [Get Docker](https://docs.docker.com/get-started/get-docker/))
 - At least 4GB of available RAM
 - Mistral AI API key ([Sign up here](https://console.mistral.ai/))
@@ -24,14 +25,25 @@ This guide provides instructions for deploying the EU-Compliant Document Chat sy
 2. **Configure environment variables**:
    Create a `.env` file in the root directory with:
    ```
+   # Core Configuration
    WEAVIATE_URL=http://weaviate:8080
    MISTRAL_API_KEY=your_api_key_here
    MISTRAL_MODEL=mistral-tiny
    MISTRAL_DAILY_TOKEN_BUDGET=10000
    MISTRAL_MAX_REQUESTS_PER_MINUTE=10
+   
+   # Chat Logging Configuration (for research purposes)
+   ENABLE_CHAT_LOGGING=false        # Set to 'true' to enable logging
+   ANONYMIZE_CHAT_LOGS=true         # Controls anonymization of identifiers
+   LOG_RETENTION_DAYS=30            # Days to keep logs before deletion
    ```
 
-3. **Start the system**:
+3. **Create chat_data directory** (if you plan to use logging):
+   ```bash
+   mkdir -p chat_data
+   ```
+
+4. **Start the system**:
    
    On Windows:
    ```powershell
@@ -43,20 +55,21 @@ This guide provides instructions for deploying the EU-Compliant Document Chat sy
    docker-compose up -d
    ```
 
-4. **Access the interfaces**:
+5. **Access the interfaces**:
    - Web interface: http://localhost:8501
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080
+   - Privacy notice: http://localhost:8000/privacy
 
-5. **Add documents**:
+6. **Add documents**:
    Place .txt files in the `data/` directory.
 
-## Production Deployment (Hetzner)
+## Production Deployment (E.g. Hetzner)
 
 ### Prerequisites
 
-- Hetzner Cloud account
 - Domain name (optional, for HTTPS)
+- Hetzner Cloud account
 - SSH key registered with Hetzner
 
 ### Server Sizing
@@ -90,33 +103,53 @@ Recommended server configuration:
    ```
    Add the following content:
    ```
+   # Core Configuration
    WEAVIATE_URL=http://weaviate:8080
    MISTRAL_API_KEY=your_api_key_here
    MISTRAL_MODEL=mistral-small
    MISTRAL_DAILY_TOKEN_BUDGET=50000
    MISTRAL_MAX_REQUESTS_PER_MINUTE=10
+   
+   # Chat Logging Configuration (for research purposes)
+   ENABLE_CHAT_LOGGING=false        # Set to 'true' when needed for research
+   ANONYMIZE_CHAT_LOGS=true         # Keep enabled for GDPR compliance
+   LOG_RETENTION_DAYS=30            # Adjust based on your data policy
    ```
 
-5. **Adjust docker-compose.yml** (optional):
+5. **Create directories for persistence**:
+   ```bash
+   mkdir -p data chat_data
+   chmod 777 data chat_data  # Ensure Docker can write to these directories
+   ```
+
+6. **Adjust docker-compose.yml** (optional):
    For production, replace the prototype web interface with the production one:
    ```bash
    nano docker-compose.yml
    ```
    Comment out the `web-prototype` service and uncomment the `web-production` service.
+   
+   Make sure the volume mounts include chat_data:
+   ```yaml
+   api:
+     # ... other configuration ...
+     volumes:
+       - ./chat_data:/app/chat_data
+   ```
 
-6. **Start the system**:
+7. **Start the system**:
    ```bash
    docker-compose up -d
    ```
 
-7. **Set up a domain** (optional):
+8. **Set up a domain** (optional):
    To use HTTPS, set up DNS to point to your server's IP address, then install Certbot for SSL:
    ```bash
    apt install -y certbot python3-certbot-nginx
    certbot --nginx -d yourdomain.com
    ```
 
-8. **Create a data volume** (recommended):
+9. **Create a data volume** (recommended):
    For data persistence:
    ```bash
    docker volume create doc_chat_data
@@ -134,6 +167,9 @@ docker-compose down
 # Backup the Weaviate data volume
 docker run --rm -v weaviate_data:/data -v $(pwd)/backups:/backups ubuntu tar -czvf /backups/weaviate_backup_$(date +%Y%m%d).tar.gz /data
 
+# Backup chat logs if enabled
+tar -czvf backups/chat_logs_backup_$(date +%Y%m%d).tar.gz chat_data/
+
 # Restart the containers
 docker-compose up -d
 ```
@@ -150,6 +186,21 @@ docker-compose build
 docker-compose up -d
 ```
 
+### Managing Chat Logs
+
+```bash
+# Enable chat logging (edit .env file)
+sed -i 's/ENABLE_CHAT_LOGGING=false/ENABLE_CHAT_LOGGING=true/' .env
+docker-compose restart api web-prototype
+
+# Disable chat logging
+sed -i 's/ENABLE_CHAT_LOGGING=true/ENABLE_CHAT_LOGGING=false/' .env
+docker-compose restart api web-prototype
+
+# Delete all chat logs (if needed for GDPR compliance)
+rm -rf chat_data/chat_log_*.jsonl
+```
+
 ## Monitoring
 
 ### Viewing Logs
@@ -160,6 +211,9 @@ docker-compose logs -f
 
 # Specific service
 docker-compose logs -f api
+
+# Check chat logs directory
+ls -la chat_data/
 ```
 
 ### Health Checks
@@ -174,6 +228,37 @@ curl http://localhost:8000/documents/count
 # Detailed statistics
 curl http://localhost:8000/statistics
 ```
+
+## Research and Analytics
+
+### Working with Chat Logs
+
+When `ENABLE_CHAT_LOGGING` is set to `true`, the system will log chat interactions to JSONL files in the `chat_data` directory:
+
+```
+chat_data/
+  chat_log_20250309.jsonl
+  chat_log_20250310.jsonl
+```
+
+These logs can be processed for research purposes:
+
+```bash
+# Simple analysis example using jq (install with: apt install jq)
+cat chat_data/chat_log_20250309.jsonl | jq '.query' | sort | uniq -c | sort -nr
+
+# Count interactions by day
+find chat_data/ -name "chat_log_*.jsonl" | xargs wc -l
+
+# Extract all questions to a CSV file
+echo "date,question" > questions.csv
+for f in chat_data/chat_log_*.jsonl; do
+  date=$(basename $f | sed 's/chat_log_\(.*\)\.jsonl/\1/')
+  cat $f | jq -r --arg date "$date" '.query | $date + "," + .'  >> questions.csv
+done
+```
+
+Remember that any research using these logs must comply with GDPR and your organization's data policies.
 
 ## Troubleshooting
 
@@ -194,6 +279,12 @@ curl http://localhost:8000/statistics
    - Check network connectivity
    - Verify token budget hasn't been exhausted
 
+4. **Chat logging issues**:
+   - Check if the chat_data directory exists and is writable
+   - Verify environment variables are set correctly
+   - Look for errors in API logs: `docker-compose logs api | grep "chat_logger"`
+   - Make sure comments in .env file are on separate lines from values
+
 ### Restarting Services
 
 ```bash
@@ -206,10 +297,15 @@ docker volume rm doc_chat_weaviate_data
 docker-compose up -d
 ```
 
-## Security Considerations
+## Security and Privacy Considerations
 
 - Keep your Mistral API key secure
 - Limit access to the server using firewall rules
 - Consider implementing authentication for production
 - Regularly update the system and dependencies
 - Monitor logs for unusual activity
+- Only enable chat logging when necessary for research
+- Ensure users are informed when logging is active (UI warning)
+- Process log data in compliance with GDPR
+- Delete logs after they are no longer needed
+- Maintain the privacy notice at `/privacy` endpoint

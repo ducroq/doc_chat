@@ -57,6 +57,13 @@ The system is designed as a modular, containerized application that allows users
 - **Production**: Nginx serving static HTML/JS application
 - **Features**: Chat interface, source citations, system status information
 
+### Chat Logger
+
+- **Purpose**: Enables privacy-compliant logging of chat interactions for research purposes
+- **Technology**: Python with JSONL file storage
+- **Features**: Anonymization, automatic rotation, GDPR compliance
+- **Location**: Integrated with API service, logs stored in mounted volume
+
 ## Data Flow
 
 1. **Document Ingestion**:
@@ -90,6 +97,10 @@ The system includes bibliographic metadata support for academic and research doc
 - All providers are EU-based
 - Built-in rate limiting and token budget controls
 - Stateless design with minimal data retention
+- Chat logging is disabled by default and opt-in only
+- All user identifiers are anonymized when logging is enabled
+- Automatic deletion of logs after configurable retention period (default: 30 days)
+- Clear user notification when logging is active
 
 ## Deployment Architecture
 

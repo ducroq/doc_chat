@@ -87,6 +87,12 @@ Simply place files in the `data/` directory. The system will automatically proce
    
 The system will automatically associate metadata with documents and display it when providing answers.
 
+## Research & Analytics Features
+
+- **Chat Logging**: Optional logging of interactions for research purposes
+- **Privacy-First Design**: GDPR-compliant with anonymization and automatic data retention policies
+- **Transparent Processing**: Clear user notifications when logging is enabled
+
 ## Documentation
 
 For more detailed information about the system, check the following documentation:
@@ -95,6 +101,7 @@ For more detailed information about the system, check the following documentatio
 - [Deployment Guide](docs/deployment-guide.md)
 - [User Guide](docs/user-guide.md)
 - [Developer Guide](docs/developer-guide.md)
+- [Privacy Notice](docs/privacy-notice.md)
 
 ## License
 
