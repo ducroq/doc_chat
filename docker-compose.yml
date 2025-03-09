@@ -1,3 +1,7 @@
+secrets:
+  mistral_api_key:
+    file: ./secrets/mistral_api_key.txt
+    
 services:
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
@@ -72,9 +76,15 @@ services:
     environment:
       - API_URL=http://api:8000
       - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-
     depends_on:
-      - api    
+      - api
+
+  # web-production:
+  #   build: ./web-production
+  #   ports:
+  #     - 80:80
+  #   depends_on:
+  #     - api
 
 volumes:
   weaviate_data:

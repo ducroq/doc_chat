@@ -175,3 +175,6 @@ data/
 
 # Chat history
 chat_data/
+
+# Keys
+secrets/

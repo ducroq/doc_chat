@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Environment variables and settings
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+if not MISTRAL_API_KEY and os.path.exists("/run/secrets/mistral_api_key"):
+    with open("/run/secrets/mistral_api_key", "r") as f:
+        MISTRAL_API_KEY = f.read().strip()
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
 DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))
 MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
