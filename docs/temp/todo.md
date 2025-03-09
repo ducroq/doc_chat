@@ -1,6 +1,3 @@
-### collect chat history for improvement of the system
-
-
 ### Security Enhancements
 - [ ] Add basic authentication for web interface
 - [ ] Implement request validation

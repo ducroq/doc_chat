@@ -33,7 +33,7 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/doc-chat.git
+   git clone https://github.com/ducroq/doc-chat.git
    cd doc-chat
    ```
 

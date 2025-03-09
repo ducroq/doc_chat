@@ -55,9 +55,15 @@ services:
       - MISTRAL_DAILY_TOKEN_BUDGET=${MISTRAL_DAILY_TOKEN_BUDGET}
       - MISTRAL_MAX_REQUESTS_PER_MINUTE=${MISTRAL_MAX_REQUESTS_PER_MINUTE}
       - MISTRAL_MAX_TOKENS_PER_REQUEST=${MISTRAL_MAX_TOKENS_PER_REQUEST}
+      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+      - ANONYMIZE_CHAT_LOGS=${ANONYMIZE_CHAT_LOGS:-true}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
+      - CHAT_LOG_DIR=chat_data
     depends_on:
       - weaviate
       - t2v-transformers
+    volumes:
+      - ./chat_data:/app/chat_data      
 
   web-prototype:
     build: ./web-prototype
@@ -65,8 +71,11 @@ services:
       - 8501:8501
     environment:
       - API_URL=http://api:8000
+      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+
     depends_on:
       - api    
 
 volumes:
   weaviate_data:
+  

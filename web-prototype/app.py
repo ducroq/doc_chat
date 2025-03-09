@@ -123,6 +123,37 @@ with st.sidebar:
     - Mistral AI (French) for LLM services
     - All data processing is GDPR compliant
     """)
+
+    with st.expander("Privacy Notice"):
+        st.markdown("""
+        ## Chat Logging & Privacy
+        
+        When enabled, this system may log chat interactions for research and service improvement.
+        
+        **What we collect:**
+        - Questions asked to the system
+        - Responses provided
+        - Document references used
+        - Anonymized session identifiers
+        
+        **Data Protection:**
+        - All identifiers are anonymized
+        - Logs are automatically deleted after 30 days
+        - Data is stored securely within the EU
+        - You can request deletion of your data
+        """)
+
+        if st.button("View Full Privacy Notice"):
+            # Open privacy notice in new tab using JavaScript
+            js = f"""<script>
+            window.open('http://localhost:8000/privacy', '_blank').focus();
+            </script>
+            """
+            st.components.v1.html(js, height=0)
+
+    # Display logging status if enabled
+    if os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true":
+        st.warning("⚠️ Chat logging is currently enabled for research purposes.")        
     
     st.header("System Status")
     

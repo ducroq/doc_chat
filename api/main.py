@@ -4,17 +4,21 @@ import time
 import uuid
 import logging
 import hashlib
+import pathlib
 from datetime import datetime
 from collections import deque
 from functools import lru_cache
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from dotenv import load_dotenv
 from mistralai import Mistral
 from tenacity import retry, stop_after_attempt, wait_exponential
+from chat_logger import ChatLogger
 
 # Configuration
 load_dotenv()
@@ -35,6 +39,9 @@ token_usage = {
 }
 request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
 response_cache = {}  # Dictionary to store cached responses
+
+# Initialize chat logger
+chat_logger = None
 
 # Models
 class Query(BaseModel):
@@ -265,6 +272,12 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown events"""
     # Startup validation
     logger.info("Performing startup validation...")
+
+    # Initialize the chat logger
+    global chat_logger
+    log_dir = os.getenv("CHAT_LOG_DIR", "chat_data")
+    chat_logger = ChatLogger(log_dir=log_dir)
+    logger.info(f"Chat logger initialized in {log_dir}")
     
     # Validate Weaviate connection
     if not client:
@@ -478,7 +491,11 @@ async def get_document_statistics():
 
 # Chat endpoint
 @app.post("/chat")
-async def chat(query: Query):
+async def chat(
+    query: Query, 
+    background_tasks: BackgroundTasks,
+    user_id: Optional[str] = Header(None)
+):
     """RAG-based chat endpoint that queries documents and generates a response."""
     request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
     
@@ -606,11 +623,58 @@ async def chat(query: Query):
         # Cache the result before returning
         result = {"answer": answer, "sources": sources}
         set_cached_response(cache_key, MISTRAL_MODEL, result)
+
+        # Log the interaction in the background, using background_tasks to avoid delaying the response
+        if chat_logger and chat_logger.enabled:
+            metadata = {
+                "timestamp": datetime.now().isoformat(),
+                "request_id": request_id
+            }
+            
+            background_tasks.add_task(
+                chat_logger.log_interaction,
+                query=query.question,
+                response=result,
+                request_id=request_id,
+                user_id=user_id,
+                metadata=metadata
+            )
             
         return result
             
     except Exception as e:
         return handle_api_error(e, request_id)
+    
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_notice():
+    """Serve the privacy notice."""
+    try:
+        privacy_path = pathlib.Path("privacy_notice.html")
+        if privacy_path.exists():
+            return privacy_path.read_text(encoding="utf-8")
+        else:
+            logger.warning("privacy_notice.html not found, serving fallback notice")
+            return """
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <title>Privacy Notice</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Chat Logging Privacy Notice</h1>
+                    <p>When enabled, this system logs interactions for research purposes.</p>
+                    <p>All data is processed in accordance with GDPR. Logs are automatically deleted after 30 days.</p>
+                    <p>Please contact the system administrator for more information or to request deletion of your data.</p>
+                </body>
+            </html>
+            """
+    except Exception as e:
+        logger.error(f"Error serving privacy notice: {str(e)}")
+        return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"        
+    
 
 # Main entry point
 if __name__ == "__main__":
