@@ -14,9 +14,9 @@ services:
     networks:
       - backend
     # comment out port exposure for production
-    ports:
-      - 8080:8080
-      - 50051:50051
+    # ports:
+    #   - 8080:8080
+    #   - 50051:50051
     command:
       - --host
       - 0.0.0.0
@@ -42,7 +42,7 @@ services:
   t2v-transformers:
     image: semitechnologies/transformers-inference:sentence-transformers-all-MiniLM-L6-v2
     networks:
-      - backend    
+      - backend
     environment:
       ENABLE_CUDA: '0'
     restart: on-failure

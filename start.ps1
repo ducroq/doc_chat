@@ -30,9 +30,8 @@ while (-not $ready -and $attempts -lt $maxAttempts) {
     Write-Host "Waiting for Weaviate... ($attempts/$maxAttempts)" -ForegroundColor Gray
     
     try {
-        $response = Invoke-WebRequest -Uri "http://localhost:8080/v1/.well-known/ready" -UseBasicParsing
-        # If we get a 200 response, Weaviate is ready (even with empty content)
-        if ($response.StatusCode -eq 200) {
+        $output = docker-compose exec -T api curl -s http://weaviate:8080/v1/.well-known/ready
+        if ($output -ne $null) {
             $ready = $true
             Write-Host "Weaviate is ready!" -ForegroundColor Green
         }
