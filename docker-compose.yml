@@ -13,10 +13,6 @@ services:
     image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
     networks:
       - backend
-    # comment out port exposure for production
-    # ports:
-    #   - 8080:8080
-    #   - 50051:50051
     command:
       - --host
       - 0.0.0.0
@@ -86,24 +82,29 @@ services:
     volumes:
       - ./chat_data:/app/chat_data      
 
-  web-prototype:
-    networks:
-      - frontend  
-    build: ./web-prototype
-    ports:
-      - 8501:8501
-    environment:
-      - API_URL=http://api:8000
-      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-    depends_on:
-      - api
-
-  # web-production:
-  #   build: ./web-production
+  # web-prototype:
+  #   networks:
+  #     - frontend  
+  #   build: ./web-prototype
   #   ports:
-  #     - 80:80
+  #     - 8501:8501
+  #   environment:
+  #     - API_URL=http://api:8000
+  #     - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
   #   depends_on:
   #     - api
+
+  web-production:
+    networks:
+      - frontend   
+    build: ./web-production
+    ports:
+      - 80:80
+    environment:
+      - API_URL=http://api:8000
+      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}      
+    depends_on:
+      - api
 
 volumes:
   weaviate_data:
