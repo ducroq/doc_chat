@@ -97,6 +97,7 @@ The system includes bibliographic metadata support for academic and research doc
 - All providers are EU-based
 - Built-in rate limiting and token budget controls
 - Stateless design with minimal data retention
+- **Docker Secrets** for secure credentials management
 - Chat logging is disabled by default and opt-in only
 - All user identifiers are anonymized when logging is enabled
 - Automatic deletion of logs after configurable retention period (default: 30 days)

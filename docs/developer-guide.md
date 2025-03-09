@@ -47,7 +47,6 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
    Create a `.env` file with:
    ```
    WEAVIATE_URL=http://weaviate:8080
-   MISTRAL_API_KEY=your_api_key_here
    MISTRAL_MODEL=mistral-tiny
    MISTRAL_DAILY_TOKEN_BUDGET=10000
    MISTRAL_MAX_REQUESTS_PER_MINUTE=10
@@ -61,6 +60,17 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
    ```bash
    docker-compose up -d
    ```
+
+### Secure Secrets Management with Docker Secrets
+
+For improved security, use Docker Secrets instead of environment variables for sensitive information:
+
+1. **Create a secrets directory and files**:
+   ```bash
+   mkdir -p ./secrets
+   echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
+   chmod 600 ./secrets/mistral_api_key.txt   
+
 
 ### Direct Component Development
 
@@ -158,6 +168,32 @@ See `docs/workflows/document-processing.md` for detailed sequence diagram.
 6. Response is generated and returned with sources
 
 See `docs/workflows/query-processing.md` for detailed sequence diagram.
+
+
+## Secrets Management
+
+The system uses Docker Secrets for managing sensitive credentials:
+
+### How It Works
+
+1. Secrets are stored in files in the `./secrets/` directory
+2. Docker mounts these as in-memory files in containers
+3. The application reads these files to access credentials
+
+### Working with Secrets
+
+When developing locally:
+
+```bash
+# Create the secrets directory
+mkdir -p ./secrets
+
+# Add your API key
+echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
+
+# Secure the file
+chmod 600 ./secrets/mistral_api_key.txt
+```
 
 ## Adding New Features
 
