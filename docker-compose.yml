@@ -1,10 +1,19 @@
 secrets:
   mistral_api_key:
     file: ./secrets/mistral_api_key.txt
-    
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
 services:
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.29.0
+    networks:
+      - backend
+    # comment out port exposure for production
     ports:
       - 8080:8080
       - 50051:50051
@@ -32,11 +41,15 @@ services:
 
   t2v-transformers:
     image: semitechnologies/transformers-inference:sentence-transformers-all-MiniLM-L6-v2
+    networks:
+      - backend    
     environment:
       ENABLE_CUDA: '0'
     restart: on-failure
 
   processor:
+    networks:
+      - backend  
     build: ./processor
     volumes:
       - ./data:/data
@@ -49,12 +62,16 @@ services:
     restart: on-failure
 
   api:
+    networks:
+      - frontend
+      - backend
+    secrets:
+      - mistral_api_key
     build: ./api
     ports:
       - 8000:8000
     environment:
-      - WEAVIATE_URL=${WEAVIATE_URL}
-      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - WEAVIATE_URL=http://weaviate:8080
       - MISTRAL_MODEL=${MISTRAL_MODEL}
       - MISTRAL_DAILY_TOKEN_BUDGET=${MISTRAL_DAILY_TOKEN_BUDGET}
       - MISTRAL_MAX_REQUESTS_PER_MINUTE=${MISTRAL_MAX_REQUESTS_PER_MINUTE}
@@ -70,6 +87,8 @@ services:
       - ./chat_data:/app/chat_data      
 
   web-prototype:
+    networks:
+      - frontend  
     build: ./web-prototype
     ports:
       - 8501:8501
