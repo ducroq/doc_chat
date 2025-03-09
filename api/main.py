@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import uuid
@@ -9,6 +10,7 @@ from datetime import datetime
 from collections import deque
 from functools import lru_cache
 from typing import Optional
+from pydantic import BaseModel, Field, field_validator
 
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
 from fastapi.responses import HTMLResponse
@@ -48,8 +50,77 @@ chat_logger = None
 
 # Models
 class Query(BaseModel):
-    question: str
+    question: str = Field(..., min_length=3, max_length=1000)
+    
+    @field_validator('question')
+    @classmethod
+    def validate_question_content(cls, v: str) -> str:
+        # 1. Check for script injection patterns
+        dangerous_patterns = [
+            '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
+            'ondblclick=', 'onmouseover=', 'onmouseout=', 'onfocus=', 'onblur=',
+            'oninput=', 'onchange=', 'onsubmit=', 'onreset=', 'onselect=',
+            'onkeydown=', 'onkeypress=', 'onkeyup=', 'ondragenter=', 'ondragleave=',
+            'data:text/html', 'vbscript:', 'expression(', 'document.cookie',
+            'document.write', 'window.location', 'eval(', 'exec('
+        ]
+        
+        for pattern in dangerous_patterns:
+            if pattern.lower() in v.lower():
+                raise ValueError(f'Potentially unsafe input detected: {pattern}')
+        
+        # 2. Check for SQL injection patterns - Fixed regex
+        sql_patterns = [
+            'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'UNION',
+            'FROM', 'WHERE', '1=1', 'OR 1=1', 'OR TRUE', '--'
+        ]
+        
+        # Count SQL keywords manually to avoid regex issues
+        sql_count = 0
+        for pattern in sql_patterns:
+            # Check for whole words only
+            if re.search(r'\b' + re.escape(pattern) + r'\b', v.upper()):
+                sql_count += 1
+        
+        # Allow a few keywords as they might be in natural language
+        if sql_count >= 3:
+            raise ValueError('Potential SQL injection pattern detected')
+        
+        # 3. Check for command injection patterns
+        cmd_patterns = [
+            ';', '&&', '||', '`', '$(',  # Command chaining in bash/shell
+            '| ', '>>', '>', '<', 'ping ', 'wget ', 'curl ', 
+            'chmod ', 'rm -', 'sudo ', '/etc/', '/bin/'
+        ]
+        
+        for pattern in cmd_patterns:
+            if pattern in v:
+                raise ValueError(f'Potential command injection pattern detected: {pattern}')
+        
+        # 4. Check for excessive special characters (might indicate an attack)
+        special_char_count = sum(1 for char in v if char in '!@#$%^&*()+={}[]|\\:;"\'<>?/~`')
+        if special_char_count > len(v) * 0.3:  # If more than 30% are special characters
+            raise ValueError('Too many special characters in input')
+            
+        # 5. Check for extremely repetitive patterns (DoS attempts)
+        if re.search(r'(.)\1{20,}', v):  # Same character repeated 20+ times
+            raise ValueError('Input contains excessive repetition')
+            
+        return v
 
+    @field_validator('question')
+    @classmethod
+    def normalize_question(cls, v: str) -> str:
+        # Trim excessive whitespace
+        v = re.sub(r'\s+', ' ', v).strip()
+        
+        # Ensure the question ends with a question mark if it looks like a question
+        question_starters = ['who', 'what', 'when', 'where', 'why', 'how', 'is', 'are', 'can', 'could', 'do', 'does']
+        if any(v.lower().startswith(starter) for starter in question_starters) and not v.endswith('?'):
+            v += '?'
+            
+        return v
+    
 # Utility functions
 def check_token_budget(estimated_tokens):
     """Check if we have enough budget for this request"""
