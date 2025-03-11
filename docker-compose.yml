@@ -28,9 +28,6 @@ services:
       ENABLE_MODULES: 'text2vec-transformers'
       TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers:8080'
       CLUSTER_HOSTNAME: 'node1'
-      # CLUSTER_GOSSIP_BIND_PORT: '7946'
-      # CLUSTER_DATA_BIND_PORT: '7100'
-      # CLUSTER_ENABLED: 'false'      
     volumes:
       - weaviate_data:/var/lib/weaviate
     restart: on-failure
@@ -103,12 +100,9 @@ services:
     environment:
       - API_URL=http://api:8000
       - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-      - USE_STREAMLIT_PROXY=true
     depends_on:
       - api
       - web-prototype
-    volumes:
-      - ./web-production/nginx/streamlit-proxy.conf:/etc/nginx/conf.d/default.conf
 
 volumes:
   weaviate_data:
