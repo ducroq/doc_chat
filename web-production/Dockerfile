@@ -2,7 +2,8 @@ FROM nginx:stable-alpine
 
 # Copy configuration
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+# COPY nginx/streamlit-proxy.conf /etc/nginx/streamlit-proxy.conf
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf.original
 COPY nginx/mime.types /etc/nginx/mime.types
 COPY nginx/.htpasswd /etc/nginx/.htpasswd
 

@@ -49,8 +49,8 @@ doc_chat/
 ├── web-production/
 │   ├── html/
 │   │   ├── index.html
+│   │   ├── script.js
 │   │   ├── style.css
-│   │   ├── style.js
 │   ├── nginx/
 │   │   ├── default.conf
 │   │   ├── generate password
@@ -4988,12 +4988,15 @@ if __name__ == "__main__":
 # web-production\html\index.html
 ```text
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>Document Chat</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/whatwg-fetch@3.6.2/dist/fetch.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/core-js-bundle@3.35.1/minified.js"></script>
 </head>
 <body>
     <div class="container">
@@ -5006,141 +5009,19 @@ if __name__ == "__main__":
             </div>
         </div>
     </div>
+    <div id="status-indicator" class="status-indicator">API Connected</div>
+    
+    <!-- Load configuration -->
     <script src="config.js"></script>
+    
+    <!-- Load main script -->
     <script src="script.js"></script>
 </body>
 </html>
 ```
 
 
-# web-production\html\style.css
-```text
-body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 0;
-    background-color: #f5f5f5;
-}
-
-.container {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 20px;
-}
-
-h1 {
-    color: #333;
-    text-align: center;
-    margin-bottom: 20px;
-}
-
-#chat-container {
-    background-color: white;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-    height: 600px;
-    display: flex;
-    flex-direction: column;
-}
-
-#chat-messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-}
-
-.message {
-    margin-bottom: 15px;
-    padding: 10px 15px;
-    border-radius: 8px;
-    max-width: 80%;
-}
-
-.user-message {
-    background-color: #e1f5fe;
-    align-self: flex-end;
-    margin-left: auto;
-}
-
-.assistant-message {
-    background-color: #f1f1f1;
-    align-self: flex-start;
-}
-
-.sources {
-    font-size: 0.8em;
-    margin-top: 5px;
-    color: #666;
-}
-
-.input-area {
-    display: flex;
-    padding: 10px;
-    border-top: 1px solid #eee;
-}
-
-#message-input {
-    flex: 1;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    margin-right: 10px;
-}
-
-#send-button {
-    padding: 10px 15px;
-    background-color: #2196F3;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-#send-button:hover {
-    background-color: #0b7dda;
-}
-
-.error-message {
-    color: #d32f2f;
-    text-align: center;
-    padding: 10px;
-}
-
-.typing-indicator {
-    display: flex;
-    padding: 10px 15px;
-}
-
-.typing-indicator span {
-    height: 8px;
-    width: 8px;
-    background-color: #aaa;
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 5px;
-    animation: bounce 1.5s infinite ease-in-out;
-}
-
-.typing-indicator span:nth-child(2) {
-    animation-delay: 0.2s;
-}
-
-.typing-indicator span:nth-child(3) {
-    animation-delay: 0.4s;
-}
-
-@keyframes bounce {
-    0%, 100% {
-        transform: translateY(0);
-    }
-    50% {
-        transform: translateY(-5px);
-    }
-}
-```
-
-
-# web-production\html\style.js
+# web-production\html\script.js
 ```text
 document.addEventListener('DOMContentLoaded', () => {
     const chatMessages = document.getElementById('chat-messages');
@@ -5233,7 +5114,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    async function sendMessage() {
+    function addErrorMessage(message) {
+        const errorElement = document.createElement("div");
+        errorElement.className = "error-message";
+        errorElement.textContent = message;
+        chatMessages.appendChild(errorElement);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    function sendMessage() {
         const message = messageInput.value.trim();
         if (!message) return;
         
@@ -5248,51 +5137,105 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show typing indicator
         addTypingIndicator();
         
-        try {
-            // Send to API with longer timeout
-            console.log("Sending request to:", `${API_URL}/chat`);
+        // Using regular promises instead of async/await to avoid the message channel error
+        console.log("Sending request to:", `${API_URL}/chat`);
+        
+        // Set up the fetch request
+        fetch(`${API_URL}/chat`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ question: message })
+        })
+        .then(response => {
+            console.log("Response status:", response.status);
             
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60-second timeout
+            if (!response.ok) {
+                throw new Error(`Error: ${response.status} ${response.statusText}`);
+            }
             
-            const response = await fetch(`${API_URL}/chat`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ question: message }),
-                signal: controller.signal
-            });
-            
-            clearTimeout(timeoutId);
+            return response.json();
+        })
+        .then(data => {
+            console.log("Response data:", data);
             
             // Remove typing indicator
             removeTypingIndicator();
             
-            console.log("Response status:", response.status);
-            
-            if (!response.ok) {
-                throw new Error(`Error: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            console.log("Response data:", data);
-            
             // Add assistant response to chat
-            addMessage(data.answer, false, data.sources);
-            
-        } catch (error) {
+            if (data && data.answer) {
+                addMessage(data.answer, false, data.sources || []);
+            } else {
+                throw new Error("Received an empty or invalid response");
+            }
+        })
+        .catch(error => {
             console.error("Error sending message:", error);
             removeTypingIndicator();
             
-            // Add error message
-            const errorElement = document.createElement("div");
-            errorElement.className = "error-message";
-            errorElement.textContent = `Error: ${error.message}. Please try again.`;
-            chatMessages.appendChild(errorElement);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            // Add different error messages based on the error type
+            let errorMessage = "An error occurred. Please try again.";
+            
+            if (error.message.includes("timeout")) {
+                errorMessage = "The request took too long to complete. The server might be busy processing your question.";
+            } else if (error.message.includes("NetworkError")) {
+                errorMessage = "Network error. Please check your connection and try again.";
+            } else if (error.message.includes("SyntaxError") || error.message.includes("parse")) {
+                errorMessage = "Received an invalid response from the server. The system might be temporarily overloaded.";
+            } else if (error.message.includes("404")) {
+                errorMessage = "API endpoint not found. Please contact the administrator.";
+            } else if (error.message.includes("503")) {
+                errorMessage = "The service is temporarily unavailable. Weaviate might still be initializing.";
+            }
+            
+            addErrorMessage(`${errorMessage} (${error.message})`);
+        });
+    }
+    
+    // Health check for API
+    function checkApiHealth() {
+        try {
+            fetch(`${API_URL}/status`, {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json"
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    console.log("API health check: OK");
+                    const statusIndicator = document.getElementById('status-indicator');
+                    if (statusIndicator) {
+                        statusIndicator.className = 'status-indicator online';
+                        statusIndicator.textContent = 'API Connected';
+                    }
+                    return true;
+                } else {
+                    console.warn("API health check: Failed", response.status);
+                    const statusIndicator = document.getElementById('status-indicator');
+                    if (statusIndicator) {
+                        statusIndicator.className = 'status-indicator offline';
+                        statusIndicator.textContent = 'API Offline';
+                    }
+                    return false;
+                }
+            })
+            .catch(error => {
+                console.error("API health check error:", error);
+                const statusIndicator = document.getElementById('status-indicator');
+                if (statusIndicator) {
+                    statusIndicator.className = 'status-indicator offline';
+                    statusIndicator.textContent = 'API Offline';
+                }
+                return false;
+            });
+        } catch (error) {
+            console.error("API health check error:", error);
+            return false;
         }
-    }    
+    }
+    
     // Set up event listeners
     sendButton.addEventListener('click', sendMessage);
     
@@ -5302,9 +5245,220 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // Do a health check initially
+    checkApiHealth();
+    
+    // Periodically check API health
+    setInterval(checkApiHealth, 30000); // Check every 30 seconds
+    
     // Add initial welcome message
     addMessage("Welcome to Document Chat! Ask a question about your documents.");
 });
+```
+
+
+# web-production\html\style.css
+```text
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+h1 {
+    color: #333;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+#chat-container {
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    height: 600px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+#chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    scroll-behavior: smooth;
+}
+
+.message {
+    margin-bottom: 15px;
+    padding: 10px 15px;
+    border-radius: 8px;
+    max-width: 80%;
+    word-wrap: break-word;
+    position: relative;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.user-message {
+    background-color: #e1f5fe;
+    align-self: flex-end;
+    margin-left: auto;
+}
+
+.assistant-message {
+    background-color: #f1f1f1;
+    align-self: flex-start;
+}
+
+.sources {
+    font-size: 0.8em;
+    margin-top: 10px;
+    color: #666;
+    padding: 5px;
+    border-top: 1px solid #eee;
+}
+
+.input-area {
+    display: flex;
+    padding: 15px;
+    border-top: 1px solid #eee;
+    background-color: #f9f9f9;
+    border-radius: 0 0 8px 8px;
+}
+
+#message-input {
+    flex: 1;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-right: 10px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+#message-input:focus {
+    outline: none;
+    border-color: #2196F3;
+    box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+}
+
+#send-button {
+    padding: 10px 15px;
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    font-weight: bold;
+}
+
+#send-button:hover {
+    background-color: #0b7dda;
+}
+
+#send-button:active {
+    transform: scale(0.98);
+}
+
+.error-message {
+    color: #d32f2f;
+    text-align: center;
+    padding: 10px 15px;
+    margin: 10px auto;
+    background-color: #ffebee;
+    border-radius: 4px;
+    max-width: 90%;
+    animation: fadeIn 0.3s ease-in-out;
+    border-left: 4px solid #d32f2f;
+}
+
+.typing-indicator {
+    display: flex;
+    padding: 10px 15px;
+    background-color: #f1f1f1;
+    border-radius: 8px;
+    width: fit-content;
+    align-self: flex-start;
+    margin-bottom: 15px;
+}
+
+.typing-indicator span {
+    height: 8px;
+    width: 8px;
+    background-color: #aaa;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 5px;
+    animation: bounce 1.5s infinite ease-in-out;
+}
+
+.typing-indicator span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-5px);
+    }
+}
+
+/* Make sure the chat UI is responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+    
+    #chat-container {
+        height: calc(100vh - 100px);
+    }
+    
+    .message {
+        max-width: 90%;
+    }
+}
+
+/* Status indicator */
+.status-indicator {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    color: white;
+    background-color: #4CAF50;
+    z-index: 1000;
+    display: none;
+}
+
+.status-indicator.online {
+    background-color: #4CAF50;
+    display: block;
+}
+
+.status-indicator.offline {
+    background-color: #F44336;
+    display: block;
+}
 ```
 
 
@@ -5517,6 +5671,7 @@ COPY html /usr/share/nginx/html
 COPY entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh
+RUN chmod -R 755 /usr/share/nginx/html
 
 EXPOSE 80
 
@@ -6167,29 +6322,29 @@ services:
     volumes:
       - ./chat_data:/app/chat_data      
 
-  web-prototype:
+  # web-prototype:
+  #   networks:
+  #     - frontend  
+  #   build: ./web-prototype
+  #   ports:
+  #     - 8501:8501
+  #   environment:
+  #     - API_URL=http://api:8000
+  #     - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+  #   depends_on:
+  #     - api
+
+  web-production:
     networks:
-      - frontend  
-    build: ./web-prototype
+      - frontend   
+    build: ./web-production
     ports:
       - 80:80
     environment:
       - API_URL=http://api:8000
-      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}      
     depends_on:
       - api
-
-  # web-production:
-  #   networks:
-  #     - frontend   
-  #   build: ./web-production
-  #   ports:
-  #     - 80:80
-  #   environment:
-  #     - API_URL=http://api:8000
-  #     - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}      
-  #   depends_on:
-  #     - api
 
 volumes:
   weaviate_data:
@@ -6366,12 +6521,15 @@ $ready = $false
 $attempts = 0
 $maxAttempts = 30
 
+Start-Sleep -Seconds 1
+
 while (-not $ready -and $attempts -lt $maxAttempts) {
     $attempts++
     Write-Host "Waiting for Weaviate... ($attempts/$maxAttempts)" -ForegroundColor Gray
     
     try {
-        $output = docker-compose exec -T api curl -s http://weaviate:8080/v1/.well-known/ready
+        # Use a temporary container with curl to check Weaviate readiness instead of using the API container
+        $output = docker run --rm --network doc_chat_backend curlimages/curl -s http://weaviate:8080/v1/.well-known/ready
         if ($output -ne $null) {
             $ready = $true
             Write-Host "Weaviate is ready!" -ForegroundColor Green
@@ -6406,7 +6564,5 @@ Write-Host "Weaviate console: http://localhost:8080" -ForegroundColor Cyan
 Write-Host "Document statistics: http://localhost:8000/statistics" -ForegroundColor Cyan
 Write-Host "Processor logs: docker-compose logs -f processor" -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Cyan
-
-
 ```
 

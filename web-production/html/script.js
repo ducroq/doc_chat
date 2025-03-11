@@ -89,7 +89,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    async function sendMessage() {
+    function addErrorMessage(message) {
+        const errorElement = document.createElement("div");
+        errorElement.className = "error-message";
+        errorElement.textContent = message;
+        chatMessages.appendChild(errorElement);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    function sendMessage() {
         const message = messageInput.value.trim();
         if (!message) return;
         
@@ -104,51 +112,105 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show typing indicator
         addTypingIndicator();
         
-        try {
-            // Send to API with longer timeout
-            console.log("Sending request to:", `${API_URL}/chat`);
+        // Using regular promises instead of async/await to avoid the message channel error
+        console.log("Sending request to:", `${API_URL}/chat`);
+        
+        // Set up the fetch request
+        fetch(`${API_URL}/chat`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ question: message })
+        })
+        .then(response => {
+            console.log("Response status:", response.status);
             
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60-second timeout
+            if (!response.ok) {
+                throw new Error(`Error: ${response.status} ${response.statusText}`);
+            }
             
-            const response = await fetch(`${API_URL}/chat`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ question: message }),
-                signal: controller.signal
-            });
-            
-            clearTimeout(timeoutId);
+            return response.json();
+        })
+        .then(data => {
+            console.log("Response data:", data);
             
             // Remove typing indicator
             removeTypingIndicator();
             
-            console.log("Response status:", response.status);
-            
-            if (!response.ok) {
-                throw new Error(`Error: ${response.status}`);
-            }
-            
-            const data = await response.json();
-            console.log("Response data:", data);
-            
             // Add assistant response to chat
-            addMessage(data.answer, false, data.sources);
-            
-        } catch (error) {
+            if (data && data.answer) {
+                addMessage(data.answer, false, data.sources || []);
+            } else {
+                throw new Error("Received an empty or invalid response");
+            }
+        })
+        .catch(error => {
             console.error("Error sending message:", error);
             removeTypingIndicator();
             
-            // Add error message
-            const errorElement = document.createElement("div");
-            errorElement.className = "error-message";
-            errorElement.textContent = `Error: ${error.message}. Please try again.`;
-            chatMessages.appendChild(errorElement);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            // Add different error messages based on the error type
+            let errorMessage = "An error occurred. Please try again.";
+            
+            if (error.message.includes("timeout")) {
+                errorMessage = "The request took too long to complete. The server might be busy processing your question.";
+            } else if (error.message.includes("NetworkError")) {
+                errorMessage = "Network error. Please check your connection and try again.";
+            } else if (error.message.includes("SyntaxError") || error.message.includes("parse")) {
+                errorMessage = "Received an invalid response from the server. The system might be temporarily overloaded.";
+            } else if (error.message.includes("404")) {
+                errorMessage = "API endpoint not found. Please contact the administrator.";
+            } else if (error.message.includes("503")) {
+                errorMessage = "The service is temporarily unavailable. Weaviate might still be initializing.";
+            }
+            
+            addErrorMessage(`${errorMessage} (${error.message})`);
+        });
+    }
+    
+    // Health check for API
+    function checkApiHealth() {
+        try {
+            fetch(`${API_URL}/status`, {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json"
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    console.log("API health check: OK");
+                    const statusIndicator = document.getElementById('status-indicator');
+                    if (statusIndicator) {
+                        statusIndicator.className = 'status-indicator online';
+                        statusIndicator.textContent = 'API Connected';
+                    }
+                    return true;
+                } else {
+                    console.warn("API health check: Failed", response.status);
+                    const statusIndicator = document.getElementById('status-indicator');
+                    if (statusIndicator) {
+                        statusIndicator.className = 'status-indicator offline';
+                        statusIndicator.textContent = 'API Offline';
+                    }
+                    return false;
+                }
+            })
+            .catch(error => {
+                console.error("API health check error:", error);
+                const statusIndicator = document.getElementById('status-indicator');
+                if (statusIndicator) {
+                    statusIndicator.className = 'status-indicator offline';
+                    statusIndicator.textContent = 'API Offline';
+                }
+                return false;
+            });
+        } catch (error) {
+            console.error("API health check error:", error);
+            return false;
         }
-    }    
+    }
+    
     // Set up event listeners
     sendButton.addEventListener('click', sendMessage);
     
@@ -157,6 +219,12 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage();
         }
     });
+    
+    // Do a health check initially
+    checkApiHealth();
+    
+    // Periodically check API health
+    setInterval(checkApiHealth, 30000); // Check every 30 seconds
     
     // Add initial welcome message
     addMessage("Welcome to Document Chat! Ask a question about your documents.");

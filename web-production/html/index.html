@@ -1,10 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>Document Chat</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📚</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/whatwg-fetch@3.6.2/dist/fetch.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/core-js-bundle@3.35.1/minified.js"></script>
 </head>
 <body>
     <div class="container">
@@ -17,7 +20,12 @@
             </div>
         </div>
     </div>
+    <div id="status-indicator" class="status-indicator">API Connected</div>
+    
+    <!-- Load configuration -->
     <script src="config.js"></script>
+    
+    <!-- Load main script -->
     <script src="script.js"></script>
 </body>
 </html>
