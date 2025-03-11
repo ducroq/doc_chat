@@ -1,6 +1,8 @@
 secrets:
   mistral_api_key:
     file: ./secrets/mistral_api_key.txt
+  internal_api_key:
+    file: ./secrets/internal_api_key.txt
 
 networks:
   frontend:
@@ -60,6 +62,7 @@ services:
       - backend
     secrets:
       - mistral_api_key
+      - internal_api_key
     build: ./api
     ports:
       - 8000:8000
@@ -73,6 +76,7 @@ services:
       - ANONYMIZE_CHAT_LOGS=${ANONYMIZE_CHAT_LOGS:-true}
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
       - CHAT_LOG_DIR=chat_data
+      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
     depends_on:
       - weaviate
       - t2v-transformers
@@ -83,13 +87,16 @@ services:
     networks:
       - frontend  
     build: ./web-prototype
+    secrets:
+      - internal_api_key
     environment:
       - API_URL=http://api:8000
       - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
     depends_on:
       - api
     volumes:
-      - ./web-prototype/.streamlit:/app/.streamlit      
+      - ./web-prototype/.streamlit:/app/.streamlit
 
   web-production:
     networks:
@@ -106,4 +113,3 @@ services:
 
 volumes:
   weaviate_data:
-  

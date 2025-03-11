@@ -12,6 +12,10 @@ def check_password(username, password):
         return bcrypt.checkpw(password.encode(), stored_hash.encode())
     return False
 
+def get_api_key():
+    with open(os.environ.get("INTERNAL_API_KEY_FILE"), "r") as f:
+        return f.read().strip()
+
 def login_page():
     st.title("🇪🇺 Document Chat Login")
     
@@ -66,6 +70,7 @@ def main_app():
                     response = httpx.post(
                         f"{API_URL}/chat",
                         json={"question": prompt},
+                        headers={"X-API-Key": get_api_key()},
                         timeout=30.0
                     )
                     

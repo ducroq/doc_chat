@@ -12,8 +12,8 @@ from functools import lru_cache
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
-from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
@@ -748,7 +748,24 @@ async def privacy_notice():
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"        
+
+# In main.py
+@app.middleware("http")
+async def verify_internal_api_key(request: Request, call_next):
+    # Skip check for non-protected endpoints
+    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy"]:
+        return await call_next(request)
     
+    # Get the API key from environment
+    with open(os.environ.get("INTERNAL_API_KEY_FILE"), "r") as f:
+        expected_key = f.read().strip()
+    
+    # Check if API key is valid
+    api_key = request.headers.get("X-API-Key")
+    if api_key != expected_key:
+        return JSONResponse(status_code=403, content={"error": "Invalid API key"})
+    
+    return await call_next(request)
 
 # Main entry point
 if __name__ == "__main__":
