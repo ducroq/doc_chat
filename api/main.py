@@ -749,11 +749,10 @@ async def privacy_notice():
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"        
 
-# In main.py
 @app.middleware("http")
 async def verify_internal_api_key(request: Request, call_next):
     # Skip check for non-protected endpoints
-    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy"]:
+    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics"]:
         return await call_next(request)
     
     # Get the API key from environment

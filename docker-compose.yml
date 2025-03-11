@@ -87,6 +87,8 @@ services:
     networks:
       - frontend  
     build: ./web-prototype
+    ports:
+      - 8501:8501
     secrets:
       - internal_api_key
     environment:
