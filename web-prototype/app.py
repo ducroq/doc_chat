@@ -37,10 +37,6 @@ def main_app():
     st.title("🇪🇺 Document Chat")
     st.write("Ask questions about your documents stored in the system.")
 
-    # Show logout in sidebar
-    with st.sidebar:
-        st.button("Logout", on_click=lambda: st.session_state.update({"authenticated": False}))
-
     # Initialize session state for chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -54,9 +50,6 @@ def main_app():
                 for source in message["sources"]:
                     st.caption(f"• {source['filename']} (Chunk {source['chunkId']})")
 
-    # Your existing chat functionality
-    # ... (rest of your original Streamlit app code)
-    
     # Chat input
     if prompt := st.chat_input("Ask a question about your documents..."):
         # Add user message to chat history
@@ -143,17 +136,17 @@ def main_app():
                         "content": error_msg
                     })
 
-    # Sidebar content
+    # Enhanced sidebar with custom controls
     with st.sidebar:
-        st.header("About")
+        # About section
         st.markdown("""
-        This is a prototype for an EU-compliant document chat system using:
+        This is an EU-compliant document chat system using:
         - Weaviate (Dutch) for vector database
         - Mistral AI (French) for LLM services
         - All data processing is GDPR compliant
         """)
 
-        with st.expander("Privacy Notice"):
+        with st.expander("Privacy Notice",  expanded=False):
             st.markdown("""
             ## Chat Logging & Privacy
             
@@ -172,10 +165,10 @@ def main_app():
             - You can request deletion of your data
             """)
 
-            if st.button("View Full Privacy Notice"):
+            if st.button("View Full Privacy Notice", key="privacy_notice"):
                 # Open privacy notice in new tab using JavaScript
                 js = f"""<script>
-                window.open('http://localhost:8000/privacy', '_blank').focus();
+                window.open('{API_URL}/privacy', '_blank').focus();
                 </script>
                 """
                 st.components.v1.html(js, height=0)
@@ -183,9 +176,22 @@ def main_app():
         # Display logging status if enabled
         if os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true":
             st.warning("⚠️ Chat logging is currently enabled for research purposes.")        
+
+        # User info
+        st.markdown(f"**Logged in as:** {st.session_state.get('username', 'User')}")
+        user_col1, user_col2 = st.columns([2, 1])
+        with user_col1:
+            # log out button
+            st.button("Logout", 
+                    on_click=lambda: st.session_state.update({"authenticated": False}),
+                    key="logout_button")        
+        with user_col2:
+            # Clear conversation option
+            if st.button("🧹 Clear Conversation", key="clear_conversation"):
+                st.session_state.messages = []
+                st.rerun()                    
         
-        st.header("System Status")
-        
+        # System Status
         # Check API connection
         try:
             status_response = httpx.get(f"{API_URL}/status")
@@ -209,6 +215,88 @@ def main_app():
                 st.error(f"❌ API Service: Error {status_response.status_code}")
         except Exception as e:
             st.error(f"❌ API Service: Error connecting ({str(e)})")
+            
+        # # Help section with tips about Streamlit menu
+        # with st.expander("ℹ️ App Controls"):
+        #     st.markdown("""
+        #     **Built-in Streamlit Controls:**
+        #     - Use the **≡** menu in the top-right corner for additional options:
+        #       - 🔄 **Rerun**: Refresh the app 
+        #       - ⚙️ **Settings**: Adjust app settings
+        #       - 🖨️ **Print**: Generate printable version
+        #       - 🎥 **Record**: Create a screen recording
+        #       - 🧹 **Clear cache**: Reset app data
+            
+        #     The "Deploy" button is part of Streamlit's interface but not needed for this application.
+        #     """)
+
+    # # Rest of your existing main_app code for chat functionality
+    # # ...    
+    # with st.sidebar:
+    #     st.header("About")
+    #     st.markdown("""
+    #     This is a prototype for an EU-compliant document chat system using:
+    #     - Weaviate (Dutch) for vector database
+    #     - Mistral AI (French) for LLM services
+    #     - All data processing is GDPR compliant
+    #     """)
+
+    #     with st.expander("Privacy Notice"):
+    #         st.markdown("""
+    #         ## Chat Logging & Privacy
+            
+    #         When enabled, this system may log chat interactions for research and service improvement.
+            
+    #         **What we collect:**
+    #         - Questions asked to the system
+    #         - Responses provided
+    #         - Document references used
+    #         - Anonymized session identifiers
+            
+    #         **Data Protection:**
+    #         - All identifiers are anonymized
+    #         - Logs are automatically deleted after 30 days
+    #         - Data is stored securely within the EU
+    #         - You can request deletion of your data
+    #         """)
+
+    #         if st.button("View Full Privacy Notice"):
+    #             # Open privacy notice in new tab using JavaScript
+    #             js = f"""<script>
+    #             window.open('http://localhost:8000/privacy', '_blank').focus();
+    #             </script>
+    #             """
+    #             st.components.v1.html(js, height=0)
+
+    #     # Display logging status if enabled
+    #     if os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true":
+    #         st.warning("⚠️ Chat logging is currently enabled for research purposes.")        
+        
+    #     st.header("System Status")
+        
+    #     # Check API connection
+    #     try:
+    #         status_response = httpx.get(f"{API_URL}/status")
+    #         if status_response.status_code == 200:
+    #             status_data = status_response.json()
+                
+    #             st.success("✅ API Service: Connected")
+                
+    #             weaviate_status = status_data.get("weaviate", "unknown")
+    #             if weaviate_status == "connected":
+    #                 st.success("✅ Vector Database: Connected")
+    #             else:
+    #                 st.error("❌ Vector Database: Disconnected")
+                
+    #             mistral_status = status_data.get("mistral_api", "unknown")
+    #             if mistral_status == "configured":
+    #                 st.success("✅ LLM Service: Configured")
+    #             else:
+    #                 st.error("❌ LLM Service: Not configured")
+    #         else:
+    #             st.error(f"❌ API Service: Error {status_response.status_code}")
+    #     except Exception as e:
+    #         st.error(f"❌ API Service: Error connecting ({str(e)})")
 
 # Main entry point
 def main():

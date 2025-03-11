@@ -1,4 +1,5 @@
 [theme]
+base = "light"
 # Primary accent for interactive elements
 primaryColor = "#2196F3"
 # Background color for the main content area
@@ -9,3 +10,7 @@ secondaryBackgroundColor = "#F5F5F5"
 textColor = "#212121"
 # Font family for all text in the app, except code blocks
 font = "sans-serif"
+
+# Hide dropdown in the top right corner (a built-in Streamlit menu)
+[ui]
+hideTopBar = true
