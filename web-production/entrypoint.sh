@@ -3,7 +3,7 @@
 # Generate config file from environment variables
 cat > /usr/share/nginx/html/config.js << EOF
 window.config = {
-  apiUrl: '${API_URL}',
+  apiUrl: '/api',
   chatLoggingEnabled: ${ENABLE_CHAT_LOGGING:-false}
 };
 EOF

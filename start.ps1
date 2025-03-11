@@ -25,12 +25,15 @@ $ready = $false
 $attempts = 0
 $maxAttempts = 30
 
+Start-Sleep -Seconds 1
+
 while (-not $ready -and $attempts -lt $maxAttempts) {
     $attempts++
     Write-Host "Waiting for Weaviate... ($attempts/$maxAttempts)" -ForegroundColor Gray
     
     try {
-        $output = docker-compose exec -T api curl -s http://weaviate:8080/v1/.well-known/ready
+        # Use a temporary container with curl to check Weaviate readiness instead of using the API container
+        $output = docker run --rm --network doc_chat_backend curlimages/curl -s http://weaviate:8080/v1/.well-known/ready
         if ($output -ne $null) {
             $ready = $true
             Write-Host "Weaviate is ready!" -ForegroundColor Green
@@ -65,4 +68,3 @@ Write-Host "Weaviate console: http://localhost:8080" -ForegroundColor Cyan
 Write-Host "Document statistics: http://localhost:8000/statistics" -ForegroundColor Cyan
 Write-Host "Processor logs: docker-compose logs -f processor" -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Cyan
-

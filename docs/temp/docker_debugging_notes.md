@@ -23,6 +23,11 @@ Remove the Weaviate data volume
 docker volume rm doc_chat_weaviate_data
 ```
 
+Completely clean up Docker resources related to this project:
+```bash
+docker-compose down --volumes --remove-orphans
+docker system prune -f
+```
 
 Rebuild and restart a container, e.g. the processor:
 ```bash
