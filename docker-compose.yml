@@ -86,14 +86,13 @@ services:
     networks:
       - frontend  
     build: ./web-prototype
-  # No need to expose 8501 to the host anymore
-  # ports:
-  #   - 8501:8501
     environment:
       - API_URL=http://api:8000
       - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
     depends_on:
       - api
+    volumes:
+      - ./web-prototype/.streamlit:/app/.streamlit      
 
   web-production:
     networks:

@@ -5,7 +5,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application files
 COPY app.py .
+COPY static/ ./static/
+COPY .streamlit/ ./.streamlit/
 
 EXPOSE 8501
 

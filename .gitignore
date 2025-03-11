@@ -178,3 +178,4 @@ chat_data/
 
 # Keys
 secrets/
+web-prototype/.streamlit/secrets.toml
