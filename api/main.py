@@ -11,6 +11,7 @@ from collections import deque
 from functools import lru_cache
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
+from collections import defaultdict
 
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -44,6 +45,9 @@ token_usage = {
 }
 request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
 response_cache = {}  # Dictionary to store cached responses
+
+# Global state for rate limiting
+ip_request_counters = defaultdict(list)
 
 # Initialize chat logger
 chat_logger = None
@@ -749,7 +753,7 @@ async def privacy_notice():
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
     
-# Add security headers middleware first (this will execute second)
+# 1. First registered (executed last): Add security headers
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -759,7 +763,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
-# Add API key verification middleware second (this will execute first)
+# 2. Second registered (executed second): API key verification
 @app.middleware("http")
 async def verify_internal_api_key(request: Request, call_next):
     # Skip check for non-protected endpoints
@@ -793,6 +797,32 @@ async def verify_internal_api_key(request: Request, call_next):
         # Log unexpected errors but don't block the request
         logger.error(f"Error in API key validation: {str(e)}")
         return await call_next(request)
+    
+# 3. Last registered (executed first): Rate limiting
+@app.middleware("http")
+async def rate_limit_by_ip(request: Request, call_next):
+    # Get client IP
+    client_ip = request.client.host
+    
+    # Clean old timestamps
+    now = time.time()
+    ip_request_counters[client_ip] = [timestamp for timestamp in ip_request_counters[client_ip] 
+                                     if now - timestamp < 60]
+    
+    # Check limits
+    if len(ip_request_counters[client_ip]) >= MAX_REQUESTS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
+    # Add current timestamp
+    ip_request_counters[client_ip].append(now)
+    
+    # Process request
+    return await call_next(request)
+
+# 4. Register exception handlers
+@app.exception_handler(404)
+async def not_found_exception(request, exc):
+    return JSONResponse(status_code=404, content={"error": "Not Found"})
     
 # Main entry point
 if __name__ == "__main__":
