@@ -772,7 +772,11 @@ async def privacy_notice():
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+
+    # Only add CSP headers for non-documentation endpoints
+    if not request.url.path.startswith("/docs") and not request.url.path.startswith("/redoc"):
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+        
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -782,9 +786,9 @@ async def add_security_headers(request: Request, call_next):
 @app.middleware("http")
 async def verify_internal_api_key(request: Request, call_next):
     # Skip check for non-protected endpoints
-    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics", "/documents/count"]:
+    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics", "/documents/count"] or request.url.path.startswith("/docs/"):
         return await call_next(request)
-    
+
     # Only check API key for protected endpoints
     try:
         # Get the API key from environment
