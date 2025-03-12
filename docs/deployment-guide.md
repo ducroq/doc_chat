@@ -299,13 +299,82 @@ docker-compose up -d
 
 ## Security and Privacy Considerations
 
-- Keep your Mistral API key secure
+- Keep your Mistral API key secure using Docker Secrets
+- Rotate API keys regularly (system warns when keys are older than 90 days)
 - Limit access to the server using firewall rules
-- Consider implementing authentication for production
+- Web authentication is enabled by default - protect your credentials
+- Store all sensitive information in the `./secrets/` directory, not environment variables
+- Use the configured security headers to protect against common web vulnerabilities
 - Regularly update the system and dependencies
-- Monitor logs for unusual activity
+- Monitor logs for unusual activity or failed login attempts
 - Only enable chat logging when necessary for research
 - Ensure users are informed when logging is active (UI warning)
 - Process log data in compliance with GDPR
 - Delete logs after they are no longer needed
 - Maintain the privacy notice at `/privacy` endpoint
+- Verify Docker container images before deployment when possible
+
+### Setting Up API Keys Securely
+
+For better security, set up API keys using Docker Secrets:
+
+```bash
+# Create the secrets directory
+mkdir -p ./secrets
+
+# Set up the Mistral API key
+echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
+chmod 600 ./secrets/mistral_api_key.txt
+
+# Set up the internal API key
+openssl rand -hex 32 > ./secrets/internal_api_key.txt
+chmod 600 ./secrets/internal_api_key.txt
+```
+
+### API Key Rotation
+
+To rotate your API keys:
+
+```bash
+# Generate a new internal API key
+openssl rand -hex 32 > ./secrets/internal_api_key.txt
+chmod 600 ./secrets/internal_api_key.txt
+
+# Restart services to apply the new key
+docker-compose restart api web-prototype
+```
+
+For Mistral API key, update the key in their portal, then:
+
+```bash
+# Update the Mistral API key
+echo "your_new_mistral_api_key_here" > ./secrets/mistral_api_key.txt
+chmod 600 ./secrets/mistral_api_key.txt
+
+# Restart services to apply the new key
+docker-compose restart api
+```
+
+### Setting Up Authentication
+
+The web interface uses basic authentication. Default credentials are stored using bcrypt hashing in the Streamlit secrets.
+
+To change the password:
+
+1. Generate a new password hash:
+   ```bash
+   cd web-prototype
+   python hash_password.py
+   ```
+
+2. Update the `.streamlit/secrets.toml` file with the new hash:
+   ```toml
+   [passwords]
+   admin = "bcrypt_hash_here"
+   ```
+
+3. Restart the web interface:
+   ```bash
+   docker-compose restart web-prototype
+   ```
+   

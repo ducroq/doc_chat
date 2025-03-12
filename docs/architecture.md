@@ -98,6 +98,13 @@ The system includes bibliographic metadata support for academic and research doc
 - Built-in rate limiting and token budget controls
 - Stateless design with minimal data retention
 - **Docker Secrets** for secure credentials management
+- **Basic authentication** for web interface access
+- **Comprehensive request validation** to prevent injection attacks
+- **API key rotation mechanism** with age checking
+- **Security headers** via Nginx reverse proxy
+- **Network isolation** between frontend and backend components
+- **Content filtering** for document ingestion
+- **Non-root container execution** with privilege restrictions
 - Chat logging is disabled by default and opt-in only
 - All user identifiers are anonymized when logging is enabled
 - Automatic deletion of logs after configurable retention period (default: 30 days)

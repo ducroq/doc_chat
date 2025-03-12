@@ -12,7 +12,15 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
 - **Natural Language Querying**: Ask questions about your documents in natural language
 - **Source Citations**: All answers include references to source documents
 - **GDPR Compliance**: Built with privacy by design principles
-
+- **Enhanced Security**:
+  - Authentication for web interface
+  - Request validation and sanitization
+  - API key rotation mechanisms
+  - Docker Secrets for credential management
+  - Network isolation between components
+  - Security headers via reverse proxy
+  - Rate limiting and abuse prevention
+  
 ## Technology Stack
 
 - **Vector Database**: Weaviate (Netherlands-based)

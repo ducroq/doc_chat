@@ -170,19 +170,40 @@ See `docs/workflows/document-processing.md` for detailed sequence diagram.
 See `docs/workflows/query-processing.md` for detailed sequence diagram.
 
 
-## Secrets Management
+## Security Features
+
+### Authentication and Authorization
+
+The system includes authentication for the web interface:
+- Password-based authentication using bcrypt for secure password hashing
+- Login session management using Streamlit session state
+- API key-based authorization for API endpoints
+
+### Request Validation
+
+Comprehensive request validation is implemented:
+```python
+class Query(BaseModel):
+    question: str = Field(..., min_length=3, max_length=1000)
+    
+    @field_validator('question')
+    @classmethod
+    def validate_question_content(cls, v: str) -> str:
+        # Check for script injection patterns
+        dangerous_patterns = [
+            '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick='
+            # ... more patterns
+        ]
+        # Check for SQL injection patterns
+        # Check for command injection patterns
+        # Check for excessive special characters
+        # ... validation logic
+        return v
+```
+
+### Secrets Management
 
 The system uses Docker Secrets for managing sensitive credentials:
-
-### How It Works
-
-1. Secrets are stored in files in the `./secrets/` directory
-2. Docker mounts these as in-memory files in containers
-3. The application reads these files to access credentials
-
-### Working with Secrets
-
-When developing locally:
 
 ```bash
 # Create the secrets directory
@@ -193,6 +214,119 @@ echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
 
 # Secure the file
 chmod 600 ./secrets/mistral_api_key.txt
+```
+
+In docker-compose.yml:
+```yaml
+secrets:
+  mistral_api_key:
+    file: ./secrets/mistral_api_key.txt
+  internal_api_key:
+    file: ./secrets/internal_api_key.txt
+
+services:
+  api:
+    secrets:
+      - mistral_api_key
+      # ...
+```
+
+### API Key Rotation
+
+The system checks secret age to prompt rotation:
+```python
+def check_secret_age(secret_path, max_age_days=90):
+    """Check if a secret file is older than max_age_days"""
+    if not os.path.exists(secret_path):
+        return False
+    
+    file_timestamp = os.path.getmtime(secret_path)
+    file_age_days = (time.time() - file_timestamp) / (60 * 60 * 24)
+    
+    if file_age_days > max_age_days:
+        logger.warning(f"Secret at {secret_path} is {file_age_days:.1f} days old and should be rotated")
+        return False
+        
+    return True
+```
+
+### Reverse Proxy and Security Headers
+
+Nginx is configured with security headers:
+```
+add_header X-Frame-Options "SAMEORIGIN";
+add_header X-Content-Type-Options "nosniff";
+add_header X-XSS-Protection "1; mode=block";
+```
+
+The API also adds security headers:
+```python
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'..."
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+```
+
+### Rate Limiting and Abuse Prevention
+
+Multiple rate limiting layers protect the system:
+```python
+@app.middleware("http")
+async def rate_limit_by_ip(request: Request, call_next):
+    # Get client IP
+    client_ip = request.client.host
+    
+    # Clean old timestamps
+    now = time.time()
+    ip_request_counters[client_ip] = [timestamp for timestamp in ip_request_counters[client_ip] 
+                                     if now - timestamp < 60]
+    
+    # Check limits
+    if len(ip_request_counters[client_ip]) >= MAX_REQUESTS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
+    # Add current timestamp
+    ip_request_counters[client_ip].append(now)
+    
+    # Process request
+    return await call_next(request)
+```
+
+### Docker Security
+
+Container security is enhanced with:
+```yaml
+user: "1000:1000"  # Use non-root user
+security_opt:
+  - no-new-privileges:true
+```
+
+### Network Isolation
+
+Services are isolated into frontend and backend networks:
+```yaml
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+
+services:
+  weaviate:
+    networks:
+      - backend
+  api:
+    networks:
+      - frontend
+      - backend
+  web-prototype:
+    networks:
+      - frontend
 ```
 
 ## Adding New Features

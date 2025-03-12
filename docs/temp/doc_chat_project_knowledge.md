@@ -368,9 +368,10 @@ from collections import deque
 from functools import lru_cache
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
+from collections import defaultdict
 
-from fastapi import FastAPI, HTTPException, Header, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
@@ -401,6 +402,9 @@ token_usage = {
 }
 request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
 response_cache = {}  # Dictionary to store cached responses
+
+# Global state for rate limiting
+ip_request_counters = defaultdict(list)
 
 # Initialize chat logger
 chat_logger = None
@@ -512,6 +516,21 @@ def check_rate_limit():
     
     # Add current timestamp and allow request
     request_timestamps.append(now)
+    return True
+
+# Secret rotation logic
+def check_secret_age(secret_path, max_age_days=90):
+    """Check if a secret file is older than max_age_days"""
+    if not os.path.exists(secret_path):
+        return False
+    
+    file_timestamp = os.path.getmtime(secret_path)
+    file_age_days = (time.time() - file_timestamp) / (60 * 60 * 24)
+    
+    if file_age_days > max_age_days:
+        logger.warning(f"Secret at {secret_path} is {file_age_days:.1f} days old and should be rotated")
+        return False
+        
     return True
 
 # Error handling utilities
@@ -1104,12 +1123,88 @@ async def privacy_notice():
             """
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
-        return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"        
+        return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
     
+# 1. First registered (executed last): Add security headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
 
+    # Only add CSP headers for non-documentation endpoints
+    if not request.url.path.startswith("/docs") and not request.url.path.startswith("/redoc"):
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+        
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+# 2. Second registered (executed second): API key verification
+@app.middleware("http")
+async def verify_internal_api_key(request: Request, call_next):
+    # Skip check for non-protected endpoints
+    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics", "/documents/count"] or request.url.path.startswith("/docs/"):
+        return await call_next(request)
+
+    # Only check API key for protected endpoints
+    try:
+        # Get the API key from environment
+        api_key_file = os.environ.get("INTERNAL_API_KEY_FILE")
+        if not api_key_file or not os.path.exists(api_key_file):
+            # If API key file isn't set or doesn't exist, log a warning and continue
+            logger.warning(f"API key file not found: {api_key_file}")
+            return await call_next(request)
+            
+        with open(api_key_file, "r") as f:
+            expected_key = f.read().strip()
+        
+        # Check if API key is valid
+        api_key = request.headers.get("X-API-Key")
+        if not api_key or api_key != expected_key:
+            # Use a proper exception here instead of returning directly
+            raise HTTPException(status_code=403, detail="Invalid API key")
+            
+        # If we made it here, the key is valid
+        return await call_next(request)
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors but don't block the request
+        logger.error(f"Error in API key validation: {str(e)}")
+        return await call_next(request)
+    
+# 3. Last registered (executed first): Rate limiting
+@app.middleware("http")
+async def rate_limit_by_ip(request: Request, call_next):
+    # Get client IP
+    client_ip = request.client.host
+    
+    # Clean old timestamps
+    now = time.time()
+    ip_request_counters[client_ip] = [timestamp for timestamp in ip_request_counters[client_ip] 
+                                     if now - timestamp < 60]
+    
+    # Check limits
+    if len(ip_request_counters[client_ip]) >= MAX_REQUESTS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    
+    # Add current timestamp
+    ip_request_counters[client_ip].append(now)
+    
+    # Process request
+    return await call_next(request)
+
+# 4. Register exception handlers
+@app.exception_handler(404)
+async def not_found_exception(request, exc):
+    return JSONResponse(status_code=404, content={"error": "Not Found"})
+    
 # Main entry point
 if __name__ == "__main__":
     import uvicorn
+
+    check_secret_age("/run/secrets/mistral_api_key")
     uvicorn.run(app, host="0.0.0.0", port=8000)
 ```
 
@@ -1891,7 +1986,6 @@ Adjust temperature and other generation parameters
 # docs\temp\todo.md
 ```markdown
 
-Is security now up to right standard?
 
 Update documentation
 
@@ -5151,6 +5245,10 @@ def check_password(username, password):
         return bcrypt.checkpw(password.encode(), stored_hash.encode())
     return False
 
+def get_api_key():
+    with open(os.environ.get("INTERNAL_API_KEY_FILE"), "r") as f:
+        return f.read().strip()
+
 def login_page():
     st.title("🇪🇺 Document Chat Login")
     
@@ -5205,6 +5303,7 @@ def main_app():
                     response = httpx.post(
                         f"{API_URL}/chat",
                         json={"question": prompt},
+                        headers={"X-API-Key": get_api_key()},
                         timeout=30.0
                     )
                     
@@ -5465,9 +5564,9 @@ print(hashed)
 
 # web-prototype\requirements.txt
 ```cmake
-streamlit>=1.25.0
-httpx>=0.28.1
-bcrypt>=4.0.1
+streamlit==1.25.0
+httpx==0.28.1
+bcrypt==4.0.1
 
 ```
 
@@ -5806,6 +5905,8 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 secrets:
   mistral_api_key:
     file: ./secrets/mistral_api_key.txt
+  internal_api_key:
+    file: ./secrets/internal_api_key.txt
 
 networks:
   frontend:
@@ -5836,7 +5937,7 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
     restart: on-failure
-
+   
   t2v-transformers:
     image: semitechnologies/transformers-inference:sentence-transformers-all-MiniLM-L6-v2
     networks:
@@ -5858,6 +5959,9 @@ services:
       - weaviate
       - t2v-transformers
     restart: on-failure
+    user: "1000:1000"  # Use non-root user
+    security_opt:
+      - no-new-privileges:true
 
   api:
     networks:
@@ -5865,6 +5969,7 @@ services:
       - backend
     secrets:
       - mistral_api_key
+      - internal_api_key
     build: ./api
     ports:
       - 8000:8000
@@ -5878,41 +5983,54 @@ services:
       - ANONYMIZE_CHAT_LOGS=${ANONYMIZE_CHAT_LOGS:-true}
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
       - CHAT_LOG_DIR=chat_data
+      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
     depends_on:
       - weaviate
       - t2v-transformers
     volumes:
       - ./chat_data:/app/chat_data      
+    user: "1000:1000"  # Use non-root user
+    security_opt:
+      - no-new-privileges:true
 
   web-prototype:
     networks:
       - frontend  
     build: ./web-prototype
+    ports:
+      - "8501:8501"
+    secrets:
+      - internal_api_key
     environment:
       - API_URL=http://api:8000
       - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
     depends_on:
       - api
     volumes:
-      - ./web-prototype/.streamlit:/app/.streamlit      
+      - ./web-prototype/.streamlit:/app/.streamlit
+    user: "1000:1000"  # Use non-root user
+    security_opt:
+      - no-new-privileges:true
 
   web-production:
     networks:
       - frontend   
     build: ./web-production
     ports:
-      - 80:80
+      - "80:80"
     environment:
       - API_URL=http://api:8000
       - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
     depends_on:
       - api
       - web-prototype
+    user: "1000:1000"  # Use non-root user
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   weaviate_data:
-  
-
 ```
 
 
