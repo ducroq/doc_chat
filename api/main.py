@@ -161,6 +161,21 @@ def check_rate_limit():
     request_timestamps.append(now)
     return True
 
+# Secret rotation logic
+def check_secret_age(secret_path, max_age_days=90):
+    """Check if a secret file is older than max_age_days"""
+    if not os.path.exists(secret_path):
+        return False
+    
+    file_timestamp = os.path.getmtime(secret_path)
+    file_age_days = (time.time() - file_timestamp) / (60 * 60 * 24)
+    
+    if file_age_days > max_age_days:
+        logger.warning(f"Secret at {secret_path} is {file_age_days:.1f} days old and should be rotated")
+        return False
+        
+    return True
+
 # Error handling utilities
 class MistralAPIError(Exception):
     """Custom exception for Mistral API errors"""
@@ -827,4 +842,6 @@ async def not_found_exception(request, exc):
 # Main entry point
 if __name__ == "__main__":
     import uvicorn
+
+    check_secret_age("/run/secrets/mistral_api_key")
     uvicorn.run(app, host="0.0.0.0", port=8000)
