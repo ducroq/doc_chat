@@ -747,25 +747,53 @@ async def privacy_notice():
             """
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
-        return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"        
+        return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
+    
+# Add security headers middleware first (this will execute second)
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
+# Add API key verification middleware second (this will execute first)
 @app.middleware("http")
 async def verify_internal_api_key(request: Request, call_next):
     # Skip check for non-protected endpoints
-    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics"]:
+    if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics", "/documents/count"]:
         return await call_next(request)
     
-    # Get the API key from environment
-    with open(os.environ.get("INTERNAL_API_KEY_FILE"), "r") as f:
-        expected_key = f.read().strip()
+    # Only check API key for protected endpoints
+    try:
+        # Get the API key from environment
+        api_key_file = os.environ.get("INTERNAL_API_KEY_FILE")
+        if not api_key_file or not os.path.exists(api_key_file):
+            # If API key file isn't set or doesn't exist, log a warning and continue
+            logger.warning(f"API key file not found: {api_key_file}")
+            return await call_next(request)
+            
+        with open(api_key_file, "r") as f:
+            expected_key = f.read().strip()
+        
+        # Check if API key is valid
+        api_key = request.headers.get("X-API-Key")
+        if not api_key or api_key != expected_key:
+            # Use a proper exception here instead of returning directly
+            raise HTTPException(status_code=403, detail="Invalid API key")
+            
+        # If we made it here, the key is valid
+        return await call_next(request)
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors but don't block the request
+        logger.error(f"Error in API key validation: {str(e)}")
+        return await call_next(request)
     
-    # Check if API key is valid
-    api_key = request.headers.get("X-API-Key")
-    if api_key != expected_key:
-        return JSONResponse(status_code=403, content={"error": "Invalid API key"})
-    
-    return await call_next(request)
-
 # Main entry point
 if __name__ == "__main__":
     import uvicorn
