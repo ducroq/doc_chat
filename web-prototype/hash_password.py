@@ -1,5 +1,6 @@
 import bcrypt
 
-password = "Y7i&90z209rn"
+password = "password"
+# Hash the password
 hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 print(hashed)
