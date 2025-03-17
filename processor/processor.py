@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import logging
@@ -20,36 +21,176 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # ------------ Utility Functions ------------
-
 def chunk_text(text, max_chunk_size=1000, overlap=200):
     """
-    Split text into overlapping chunks of approximately max_chunk_size characters.
+    Split text into overlapping chunks, respecting Markdown structure.
+    
+    This function processes Markdown documents using the following conventions:
+    
+    1. Page numbering:
+       Use HTML comments to mark page numbers: <!-- page: 123 -->
+    
+    2. Heading structure:
+       Standard Markdown heading syntax determines section hierarchy:
+       # Heading 1
+       ## Heading 2
+       ### Heading 3
+    
+    3. Paragraphs:
+       Separate paragraphs with blank lines
+    
+    The function preserves document structure by:
+    - Keeping heading context with content
+    - Respecting page boundaries
+    - Maintaining heading hierarchy levels
+    - Preserving paragraph boundaries when possible
+    
+    Args:
+        text (str): The Markdown text to chunk
+        max_chunk_size (int): Maximum size of each chunk in characters
+        overlap (int): Number of characters to overlap between chunks
+        
+    Returns:
+        list: List of dictionaries with the following keys:
+            - content: The text content of the chunk
+            - page: The page number
+            - heading: The heading text for the section
+            - level: The heading level (1 for #, 2 for ##, etc.)
     """
-    # Simple paragraph-based chunking
-    # Could we improve this by more intelligently splitting chunks?
-    # What about using a transformer model to split text into meaningful chunks
-    paragraphs = text.split('\n\n')
-    chunks = []
-    current_chunk = ""
+    # Extract page markers
+    page_pattern = re.compile(r'<!--\s*page:\s*(\d+)\s*-->')
+    page_matches = list(page_pattern.finditer(text))
     
-    for paragraph in paragraphs:
-        # If adding this paragraph would exceed max_chunk_size,
-        # save the current chunk and start a new one with overlap
-        if len(current_chunk) + len(paragraph) > max_chunk_size and current_chunk:
-            chunks.append(current_chunk)
+    # First, process the text into pages
+    pages = []
+    current_page_num = 1
+    last_pos = 0
+    
+    # Process page markers
+    for match in page_matches:
+        # Add content before this page marker with current page number
+        page_text = text[last_pos:match.start()]
+        if page_text.strip():
+            pages.append((page_text, current_page_num))
+        
+        # Update page number and position
+        current_page_num = int(match.group(1))
+        last_pos = match.end()
+    
+    # Add any remaining content
+    if last_pos < len(text):
+        pages.append((text[last_pos:], current_page_num))
+    
+    # Now process each page for headings and sections
+    sections = []
+    heading_pattern = re.compile(r'^(#+)\s+(.+)$', re.MULTILINE)
+    
+    for page_text, page_num in pages:
+        # Find all headings in this page
+        heading_matches = list(heading_pattern.finditer(page_text))
+        
+        if not heading_matches:
+            # No headings on this page, treat whole page as one section
+            sections.append({
+                "text": page_text,
+                "page": page_num,
+                "heading": "Untitled Section",
+                "level": 0
+            })
+            continue
+        
+        # Process sections based on headings
+        last_heading_pos = 0
+        current_heading = "Untitled Section"
+        current_level = 0
+        
+        for i, match in enumerate(heading_matches):
+            # Add content before this heading (if not at start)
+            if i > 0 or match.start() > 0:
+                section_text = page_text[last_heading_pos:match.start()]
+                if section_text.strip():
+                    sections.append({
+                        "text": section_text,
+                        "page": page_num,
+                        "heading": current_heading,
+                        "level": current_level
+                    })
             
-            # Find a good overlap point - ideally at a paragraph boundary
-            overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
-            current_chunk = overlap_text + "\n\n" + paragraph
-        else:
-            if current_chunk:
-                current_chunk += "\n\n" + paragraph
-            else:
-                current_chunk = paragraph
+            # Update current heading and position
+            heading_marks = match.group(1)  # The # characters
+            current_level = len(heading_marks)  # Number of # determines level
+            current_heading = match.group(2).strip()  # The heading text
+            last_heading_pos = match.start()
+        
+        # Add the final section in this page
+        final_section = page_text[last_heading_pos:]
+        if final_section.strip():
+            sections.append({
+                "text": final_section,
+                "page": page_num,
+                "heading": current_heading,
+                "level": current_level
+            })
     
-    # Add the last chunk if it's not empty
-    if current_chunk:
-        chunks.append(current_chunk)
+    # Now chunk each section with context preservation
+    chunks = []
+    for section in sections:
+        section_text = section["text"]
+        section_heading = section["heading"]
+        section_page = section["page"]
+        section_level = section["level"]
+        
+        # Skip heading line itself when chunking
+        content_start = section_text.find('\n')
+        if content_start > 0:
+            content = section_text[content_start:].strip()
+        else:
+            content = section_text.strip()
+        
+        if not content:
+            continue  # Skip empty sections
+        
+        # For very small sections, keep them as a single chunk
+        if len(content) <= max_chunk_size:
+            chunks.append({
+                "content": content,
+                "page": section_page,
+                "heading": section_heading,
+                "level": section_level
+            })
+            continue
+        
+        # For larger sections, split by paragraphs
+        paragraphs = content.split('\n\n')
+        current_chunk = ""
+        
+        for paragraph in paragraphs:
+            # If adding this paragraph would exceed max size and we already have content
+            if len(current_chunk) + len(paragraph) > max_chunk_size and current_chunk:
+                chunks.append({
+                    "content": current_chunk.strip(),
+                    "page": section_page,
+                    "heading": section_heading,
+                    "level": section_level
+                })
+                
+                # For overlap, include the last bit of the previous chunk
+                overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
+                current_chunk = overlap_text + "\n\n" + paragraph
+            else:
+                if current_chunk:
+                    current_chunk += "\n\n" + paragraph
+                else:
+                    current_chunk = paragraph
+        
+        # Add the last chunk from this section
+        if current_chunk:
+            chunks.append({
+                "content": current_chunk.strip(),
+                "page": section_page,
+                "heading": section_heading,
+                "level": section_level
+            })
     
     return chunks
 
@@ -215,10 +356,21 @@ class DocumentStorage:
         except Exception as e:
             logger.error(f"Error deleting existing chunks: {str(e)}")
 
-    def store_chunk(self, content, filename, chunk_id, metadata=None):
-        """Store a document chunk in Weaviate with metadata as a JSON string."""
+    def store_chunk(self, content, filename, chunk_id, metadata=None, page=None, heading=None, level=None):
+        """
+        Store a document chunk in Weaviate with metadata as a JSON string.
+        
+        Args:
+            content (str): The text content of the chunk
+            filename (str): Source document name
+            chunk_id (int): Sequential ID of the chunk within the document
+            metadata (dict, optional): Document metadata from the .metadata.json file
+            page (int, optional): Page number where this chunk appears
+            heading (str, optional): Section heading text for this chunk
+            level (int, optional): Heading level (1 for #, 2 for ##, etc.)
+        """
         start_time = time.time()
-        chunk_size = len(content)
+        chunk_size = len(content) if isinstance(content, str) else 0
         logger.debug(f"Storing chunk {chunk_id} from {filename} (size: {chunk_size} chars)")
         
         try:
@@ -227,15 +379,29 @@ class DocumentStorage:
                 "filename": filename,
                 "chunkId": chunk_id
             }
+
+            # Add page number and heading if available
+            chunk_metadata = {}
             
-            # Add metadata as a JSON string if provided
+            if page is not None:
+                chunk_metadata["page"] = page
+                
+            if heading is not None:
+                chunk_metadata["heading"] = heading
+
+            # Add heading level if available
+            if level is not None:
+                chunk_metadata["headingLevel"] = level            
+
+            # Merge with existing metadata if provided
             if metadata and isinstance(metadata, dict):
-                try:
-                    properties["metadataJson"] = json.dumps(metadata)
-                    logger.debug(f"Added metadata to chunk {chunk_id} from {filename}")
-                except Exception as e:
-                    logger.error(f"Error serializing metadata for {filename}, chunk {chunk_id}: {str(e)}")
-            
+                chunk_metadata.update(metadata)
+
+            # Add metadata as a JSON string if we have any
+            if chunk_metadata:
+                properties["metadataJson"] = json.dumps(chunk_metadata)    
+                logger.debug(f"Added metadata to chunk {chunk_id} from {filename}")            
+
             # Create a UUID based on filename and chunk_id for consistency
             obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{filename}_{chunk_id}"))
 
@@ -420,11 +586,14 @@ class DocumentProcessor:
     
     def process_file(self, file_path):
         """
-        Process a text file: read, chunk, and store in vector database.
+        Process a markdown file: read, chunk, and store in vector database.
+        
+        Handles Markdown files with structured headings and optional page markers.
+        See chunk_text() function for details on supported Markdown conventions.
         
         Args:
-            file_path: Path to the text file to process
-            
+            file_path: Path to the markdown file to process
+                
         Returns:
             bool: True if processing was successful, False otherwise
         """
@@ -484,14 +653,23 @@ class DocumentProcessor:
             chunks = chunk_text(content, self.chunk_size, self.chunk_overlap)
             chunk_time = time.time() - chunk_start
             
-            avg_chunk_size = sum(len(c) for c in chunks) / max(len(chunks), 1)
+            # Calculate average chunk size and log
+            avg_chunk_size = sum(len(chunk["content"]) for chunk in chunks) / max(len(chunks), 1)
             logger.info(f"Text chunking complete in {chunk_time:.2f}s. Created {len(chunks)} chunks with avg size of {avg_chunk_size:.1f} chars")
             
             # Store each chunk in Weaviate
             storage_start = time.time()
-            for i, chunk_content in enumerate(chunks):
-                chunk_store_start = time.time()
-                self.storage.store_chunk(chunk_content, filename, i, metadata)
+            for i, chunk in enumerate(chunks):
+                self.storage.store_chunk(
+                    chunk["content"],
+                    filename, 
+                    i, 
+                    metadata,
+                    page=chunk.get("page"),
+                    heading=chunk.get("heading"),
+                    level=chunk.get("level")
+                )
+                    
                 if i % 5 == 0 and i > 0:  # Log progress every 5 chunks
                     logger.info(f"Stored {i}/{len(chunks)} chunks from {filename}")
             
@@ -507,10 +685,10 @@ class DocumentProcessor:
             import traceback
             logger.error(traceback.format_exc())
             return False
-    
+                    
     def process_directory(self, directory_path, tracker=None):
         """
-        Process all text files in a directory.
+        Process all markdown files in a directory.
         
         Args:
             directory_path: Path to the directory containing text files
@@ -521,18 +699,18 @@ class DocumentProcessor:
         """
         start_time = time.time()
         logger.info(f"Scanning for files in {directory_path}")
-        text_files = glob.glob(os.path.join(directory_path, "*.txt"))
-        logger.info(f"Found {len(text_files)} text files")
+        md_files = glob.glob(os.path.join(directory_path, "*.md"))
+        logger.info(f"Found {len(md_files)} markdown files")
         
         stats = {
-            "total": len(text_files),
+            "total": len(md_files),
             "processed": 0,
             "skipped": 0,
             "failed": 0
         }
         
-        for i, file_path in enumerate(text_files):
-            logger.info(f"Processing file {i+1}/{len(text_files)}: {os.path.basename(file_path)}")
+        for i, file_path in enumerate(md_files):
+            logger.info(f"Processing file {i+1}/{len(md_files)}: {os.path.basename(file_path)}")
             # If tracker is provided, check if file needs processing
             if tracker and not tracker.should_process_file(file_path):
                 logger.info(f"Skipping already processed file: {file_path}")
@@ -559,13 +737,13 @@ class DocumentProcessor:
 class TextFileHandler(FileSystemEventHandler):
     def __init__(self, document_processor, tracker=None):
         """
-        Initialize a file system event handler for text files.
+        Initialize a file system event handler for Markdown files.
         
         Args:
             document_processor: DocumentProcessor instance to process files
             tracker: Optional ProcessingTracker to track processed files
         """
-        logger.info("Initializing TextFileHandler for watching text files")
+        logger.info("Initializing TextFileHandler for watching Markdown files")
         self.processor = document_processor
         self.tracker = tracker
         self.stats = {
@@ -580,7 +758,7 @@ class TextFileHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         """Handle file creation events."""
-        if event.is_directory or not event.src_path.endswith('.txt'):
+        if event.is_directory or not event.src_path.endswith('.md'):
             return
         
         event_time = time.time()
@@ -607,7 +785,7 @@ class TextFileHandler(FileSystemEventHandler):
 
     def on_modified(self, event):
         """Handle file modification events."""
-        if event.is_directory or not event.src_path.endswith('.txt'):
+        if event.is_directory or not event.src_path.endswith('.md'):
             return
         
         event_time = time.time()
@@ -634,7 +812,7 @@ class TextFileHandler(FileSystemEventHandler):
 
     def on_deleted(self, event):
         """Handle file deletion events."""
-        if event.is_directory or not event.src_path.endswith('.txt'):
+        if event.is_directory or not event.src_path.endswith('.md'):
             return
         
         event_time = time.time()

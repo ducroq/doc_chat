@@ -629,10 +629,23 @@ async def chat(
             }
         
         # Log search results
-        logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")        
+        logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")
+
+        # Format context from chunks to highlight structure
+        context_sections = []
+        for obj in search_result.objects:
+            metadata = json.loads(obj.properties.get("metadataJson", "{}"))
+            heading = metadata.get("heading", "Untitled Section")
+            page = metadata.get("page", "")
+            page_info = f" (Page {page})" if page else ""
+            
+            section_text = f"## {heading}{page_info}\n\n{obj.properties['content']}"
+            context_sections.append(section_text)
+
+        context = "\n\n".join(context_sections)
         
         # Format context from chunks
-        context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
+        # context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
         logger.info(f"[{request_id}] Context size: {len(context)} characters")
 
         # Create a hash of the query and context to use as cache key
@@ -677,14 +690,22 @@ async def chat(
                 try:
                     metadata = json.loads(obj.properties["metadataJson"])
                     source["metadata"] = metadata
+                    
+                    # Add page and heading if available
+                    if "page" in metadata:
+                        source["page"] = metadata["page"]
+                    if "heading" in metadata:
+                        source["heading"] = metadata["heading"]
+                    if "headingLevel" in metadata:
+                        source["headingLevel"] = metadata["headingLevel"]
                 except json.JSONDecodeError:
-                    logger.warning(f"Failed to parse metadata JSON for {obj.properties['filename']}")
+                    logger.warning(f"Failed to parse metadata JSON for {obj.properties['filename']}")            
             
             sources.append(source)
         
         # Use Mistral client to generate response
         messages = [
-            {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided document context. Stick to the information in the context. If you don't know the answer, say so."},
+            {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided document context. Reference section headings when appropriate in your responses. Stick to the information in the context. If you don't know the answer, say so."},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query.question}"}
         ]
         

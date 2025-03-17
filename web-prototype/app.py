@@ -88,37 +88,42 @@ def main_app():
                             for source in sources:
                                 filename = source['filename']
                                 chunk_id = source['chunkId']
-                                metadata = source.get('metadata', {})
-                                
-                                # Basic source info
-                                source_text = f"• {filename} (Chunk {chunk_id})"
-                                
-                                # Add metadata if available
-                                if metadata:
-                                    if 'title' in metadata:
-                                        source_text += f" - {metadata['title']}"
-                                    if 'itemType' in metadata:
-                                        source_text += f" [{metadata['itemType']}]"
-                                    
+
+                                if 'metadata' in source:
+                                    metadata = source.get('metadata', {})
+
+                                    # Build a rich citation with context
+                                    if metadata and 'title' in metadata:
+                                        citation = f"• {metadata['title']}"
+                                    if metadata and 'itemType' in metadata:
+                                        citation += f" [{metadata['itemType']}]"
                                     # Handle creators/authors
-                                    if 'creators' in metadata and metadata['creators']:
+                                    if metadata and 'creators' in metadata and metadata['creators']:
                                         authors = []
                                         for creator in metadata['creators']:
                                             if creator.get('creatorType') == 'author':
                                                 name = f"{creator.get('lastName', '')}, {creator.get('firstName', '')}"
                                                 authors.append(name.strip(', '))
                                         if authors:
-                                            source_text += f" by {', '.join(authors[:2])}"
+                                            citation += f" by {', '.join(authors[:2])}"
                                             if len(authors) > 2:
-                                                source_text += f" et al."
-                                    
+                                                citation += f" et al."
                                     # Add date if available
-                                    if 'date' in metadata:
-                                        source_text += f" ({metadata['date']})"
-                                
-                                # Display the source with option to show full metadata
-                                st.caption(source_text)
-                        
+                                    if metadata and 'date' in metadata:
+                                        citation += f" ({metadata['date']})"
+                                else:
+                                    citation = f"• {filename} (Chunk {chunk_id})"
+                                    
+                                # Add section info if available
+                                if 'heading' in source:
+                                    citation += f" - Section: {source['heading']}"
+                                    
+                                # Add page number if available
+                                if 'page' in source:
+                                    citation += f", Page {source['page']}"
+
+                            st.caption(citation)
+
                         # Add assistant message to chat history
                         st.session_state.messages.append({
                             "role": "assistant", 
