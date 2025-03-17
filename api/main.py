@@ -6,18 +6,21 @@ import uuid
 import logging
 import hashlib
 import pathlib
+import asyncio
 from datetime import datetime
 from collections import deque
 from functools import lru_cache
-from typing import Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Dict, List, Any, Union, Tuple, Set, Annotated
+from pydantic import BaseModel, Field, field_validator, ValidationError
 from collections import defaultdict
 
-from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from fastapi.security import APIKeyHeader
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
+from weaviate.classes.config import Configure, DataType
+from weaviate.classes.query import Filter
 from dotenv import load_dotenv
 from mistralai import Mistral
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -29,22 +32,38 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Environment variables and settings
-WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-if not MISTRAL_API_KEY and os.path.exists("/run/secrets/mistral_api_key"):
-    with open("/run/secrets/mistral_api_key", "r") as f:
-        MISTRAL_API_KEY = f.read().strip()
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
-DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))
-MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
+class Settings:
+    """Application settings loaded from environment variables with defaults."""
+    WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
+    MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+    MISTRAL_API_KEY_FILE = "/run/secrets/mistral_api_key"
+    MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
+    DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))
+    MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
+    CHAT_LOG_DIR = os.getenv("CHAT_LOG_DIR", "chat_data")
+    INTERNAL_API_KEY_FILE = os.getenv("INTERNAL_API_KEY_FILE", "/run/secrets/internal_api_key")
+    MAX_CACHE_ENTRIES = int(os.getenv("MAX_CACHE_ENTRIES", "100"))
+    CACHE_EXPIRY_SECONDS = int(os.getenv("CACHE_EXPIRY_SECONDS", "3600"))  # 1 hour
+    MAX_QUERY_LENGTH = 1000
+    MIN_QUERY_LENGTH = 3
+
+settings = Settings()
+
+# Load API key from file if available
+if not settings.MISTRAL_API_KEY and os.path.exists(settings.MISTRAL_API_KEY_FILE):
+    try:
+        with open(settings.MISTRAL_API_KEY_FILE, "r") as f:
+            settings.MISTRAL_API_KEY = f.read().strip()
+    except Exception as e:
+        logger.error(f"Error reading Mistral API key from file: {str(e)}")
 
 # Global state tracking
 token_usage = {
     "count": 0,
     "reset_date": datetime.now().strftime("%Y-%m-%d")
 }
-request_timestamps = deque(maxlen=MAX_REQUESTS_PER_MINUTE)
-response_cache = {}  # Dictionary to store cached responses
+request_timestamps = deque(maxlen=settings.MAX_REQUESTS_PER_MINUTE)
+response_cache: Dict[str, Dict[str, Any]] = {}  # Dictionary to store cached responses
 
 # Global state for rate limiting
 ip_request_counters = defaultdict(list)
@@ -54,11 +73,29 @@ chat_logger = None
 
 # Models
 class Query(BaseModel):
-    question: str = Field(..., min_length=3, max_length=1000)
+    """
+    Model for user queries with validation.
+    
+    Attributes:
+        question: The user's question to be processed
+    """
+    question: str = Field(..., min_length=settings.MIN_QUERY_LENGTH, max_length=settings.MAX_QUERY_LENGTH)
     
     @field_validator('question')
     @classmethod
     def validate_question_content(cls, v: str) -> str:
+        """
+        Validate that a question does not contain malicious patterns.
+        
+        Args:
+            v: The question string to validate
+            
+        Returns:
+            str: The validated question
+            
+        Raises:
+            ValueError: If the question contains dangerous patterns
+        """
         # 1. Check for script injection patterns
         dangerous_patterns = [
             '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
@@ -115,6 +152,15 @@ class Query(BaseModel):
     @field_validator('question')
     @classmethod
     def normalize_question(cls, v: str) -> str:
+        """
+        Normalize question format by trimming whitespace and adding question mark if needed.
+        
+        Args:
+            v: The question string to normalize
+            
+        Returns:
+            str: The normalized question
+        """
         # Trim excessive whitespace
         v = re.sub(r'\s+', ' ', v).strip()
         
@@ -124,10 +170,101 @@ class Query(BaseModel):
             v += '?'
             
         return v
+
+class APIResponse(BaseModel):
+    """
+    Model for API responses with source citations.
     
+    Attributes:
+        answer: The generated response text
+        sources: List of source documents used to generate the answer
+        error: Optional error information
+    """
+    answer: str
+    sources: List[Dict[str, Any]] = []
+    error: Optional[str] = None
+
+class DocumentMetadata(BaseModel):
+    """
+    Model for document metadata.
+    
+    Attributes:
+        page: Optional page number within document
+        heading: Optional section heading
+        headingLevel: Optional heading level (1-6)
+        creators: Optional list of content creators
+        title: Optional document title
+        date: Optional document publication date
+        itemType: Optional document type (e.g., "journalArticle")
+    """
+    page: Optional[int] = None
+    heading: Optional[str] = None
+    headingLevel: Optional[int] = None
+    creators: Optional[List[Dict[str, str]]] = None
+    title: Optional[str] = None
+    date: Optional[str] = None
+    itemType: Optional[str] = None
+    
+class Source(BaseModel):
+    """
+    Model for document source information.
+    
+    Attributes:
+        filename: The filename of the source document
+        chunkId: The chunk ID within the document
+        page: Optional page number
+        heading: Optional section heading
+        metadata: Optional document metadata
+    """
+    filename: str
+    chunkId: int
+    page: Optional[int] = None
+    heading: Optional[str] = None
+    metadata: Optional[DocumentMetadata] = None
+    
+    
+# Error classes
+class MistralAPIError(Exception):
+    """
+    Custom exception for Mistral API errors.
+    
+    Attributes:
+        message: Error message
+        error_type: Type of error
+        is_transient: Whether the error is temporary and can be retried
+    """
+    def __init__(self, message: str, error_type: Optional[str] = None, is_transient: bool = False):
+        self.message = message
+        self.error_type = error_type
+        self.is_transient = is_transient
+        super().__init__(self.message)
+
+class WeaviateError(Exception):
+    """
+    Custom exception for Weaviate errors.
+    
+    Attributes:
+        message: Error message
+        error_type: Type of error
+        is_transient: Whether the error is temporary and can be retried
+    """
+    def __init__(self, message: str, error_type: Optional[str] = None, is_transient: bool = False):
+        self.message = message
+        self.error_type = error_type
+        self.is_transient = is_transient
+        super().__init__(self.message)
+
 # Utility functions
-def check_token_budget(estimated_tokens):
-    """Check if we have enough budget for this request"""
+def check_token_budget(estimated_tokens: int) -> bool:
+    """
+    Check if we have enough budget for this request.
+    
+    Args:
+        estimated_tokens: Estimated token count for this request
+        
+    Returns:
+        bool: True if there's enough budget, False otherwise
+    """
     # Reset counter if it's a new day
     today = datetime.now().strftime("%Y-%m-%d")
     if token_usage["reset_date"] != today:
@@ -136,17 +273,27 @@ def check_token_budget(estimated_tokens):
         logger.info(f"Token budget reset for new day: {today}")
     
     # Check if this request would exceed our budget
-    if token_usage["count"] + estimated_tokens > DAILY_TOKEN_BUDGET:
+    if token_usage["count"] + estimated_tokens > settings.DAILY_TOKEN_BUDGET:
         return False
     return True
 
-def update_token_usage(tokens_used):
-    """Update the token usage tracker"""
+def update_token_usage(tokens_used: int) -> None:
+    """
+    Update the token usage tracker.
+    
+    Args:
+        tokens_used: Number of tokens used in this request
+    """
     token_usage["count"] += tokens_used
-    logger.info(f"Token usage: {token_usage['count']}/{DAILY_TOKEN_BUDGET} for {token_usage['reset_date']}")
+    logger.info(f"Token usage: {token_usage['count']}/{settings.DAILY_TOKEN_BUDGET} for {token_usage['reset_date']}")
 
-def check_rate_limit():
-    """Check if we're within rate limits"""
+def check_rate_limit() -> bool:
+    """
+    Check if we're within rate limits.
+    
+    Returns:
+        bool: True if the request is within rate limits, False otherwise
+    """
     now = time.time()
     
     # Clean old timestamps (older than 1 minute)
@@ -154,16 +301,24 @@ def check_rate_limit():
         request_timestamps.popleft()
     
     # Check if we've hit the limit
-    if len(request_timestamps) >= MAX_REQUESTS_PER_MINUTE:
+    if len(request_timestamps) >= settings.MAX_REQUESTS_PER_MINUTE:
         return False
     
     # Add current timestamp and allow request
     request_timestamps.append(now)
     return True
 
-# Secret rotation logic
-def check_secret_age(secret_path, max_age_days=90):
-    """Check if a secret file is older than max_age_days"""
+def check_secret_age(secret_path: str, max_age_days: int = 90) -> bool:
+    """
+    Check if a secret file is older than max_age_days.
+    
+    Args:
+        secret_path: Path to the secret file
+        max_age_days: Maximum age in days
+        
+    Returns:
+        bool: True if the secret is valid, False if it's too old or missing
+    """
     if not os.path.exists(secret_path):
         return False
     
@@ -176,33 +331,16 @@ def check_secret_age(secret_path, max_age_days=90):
         
     return True
 
-# Error handling utilities
-class MistralAPIError(Exception):
-    """Custom exception for Mistral API errors"""
-    def __init__(self, message, error_type=None, is_transient=False):
-        self.message = message
-        self.error_type = error_type
-        self.is_transient = is_transient
-        super().__init__(self.message)
-
-class WeaviateError(Exception):
-    """Custom exception for Weaviate errors"""
-    def __init__(self, message, error_type=None, is_transient=False):
-        self.message = message
-        self.error_type = error_type
-        self.is_transient = is_transient
-        super().__init__(self.message)
-
-def handle_api_error(e, request_id=None):
+def handle_api_error(e: Exception, request_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Handle API errors with appropriate response and logging
+    Handle API errors with appropriate response and logging.
     
     Args:
         e: The exception
         request_id: Request ID for logging
     
     Returns:
-        Appropriate error response
+        Dict[str, Any]: Appropriate error response
     """
     log_prefix = f"[{request_id}] " if request_id else ""
     
@@ -231,25 +369,26 @@ def handle_api_error(e, request_id=None):
             "sources": [],
             "error": "unexpected_error"
         }
-def get_cached_response(query_hash, model):
+
+def get_cached_response(query_hash: str, model: str) -> Optional[Dict[str, Any]]:
     """
-    Get a response from cache if it exists
+    Get a response from cache if it exists.
     
     Args:
         query_hash: Hash of the query and context
         model: Model name used for generation
     
     Returns:
-        Cached response or None if not found
+        Optional[Dict[str, Any]]: Cached response or None if not found
     """
     cache_key = f"{query_hash}_{model}"
     cached_item = response_cache.get(cache_key)
     
     # If we have a cached item and it's not expired
     if cached_item:
-        # Check if the cache is still valid (cached for less than 1 hour)
+        # Check if the cache is still valid (cached for less than configured time)
         cache_time = cached_item.get("timestamp", 0)
-        if time.time() - cache_time < 3600:  # 1 hour cache validity
+        if time.time() - cache_time < settings.CACHE_EXPIRY_SECONDS:
             logger.info(f"Cache hit for key: {cache_key[:10]}...")
             return cached_item.get("response")
         else:
@@ -259,9 +398,9 @@ def get_cached_response(query_hash, model):
     
     return None
 
-def set_cached_response(query_hash, model, response):
+def set_cached_response(query_hash: str, model: str, response: Dict[str, Any]) -> None:
     """
-    Store a response in the cache
+    Store a response in the cache.
     
     Args:
         query_hash: Hash of the query and context
@@ -276,9 +415,9 @@ def set_cached_response(query_hash, model, response):
         "timestamp": time.time()
     }
     
-    # Limit cache size to 100 entries
-    if len(response_cache) > 100:
-        # Remove oldest entry (simple approach)
+    # Limit cache size to configured number of entries
+    if len(response_cache) > settings.MAX_CACHE_ENTRIES:
+        # Remove oldest entry
         oldest_key = None
         oldest_time = float('inf')
         
@@ -292,14 +431,36 @@ def set_cached_response(query_hash, model, response):
             logger.info(f"Removed oldest cache entry: {oldest_key[:10]}...")
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-def call_mistral_with_retry(client, model, messages, temperature):
-    """Call Mistral API with retry logic for transient errors"""
+async def call_mistral_with_retry(
+    client: Mistral, 
+    model: str, 
+    messages: List[Dict[str, str]], 
+    temperature: float
+) -> Any:
+    """
+    Call Mistral API with retry logic for transient errors.
+    
+    Args:
+        client: Mistral API client
+        model: Model name to use
+        messages: List of message objects
+        temperature: Temperature setting for generation
+        
+    Returns:
+        Any: Mistral API response
+        
+    Raises:
+        MistralAPIError: If the API call fails after retries
+    """
     try:
-        return client.chat.complete(
+        # Convert dict messages to ChatMessage objects
+        return await asyncio.to_thread(
+            client.chat.complete,
             model=model,
-            messages=messages,
+            messages=messages,  # Use the dict format directly
             temperature=temperature,
         )
+
     except Exception as e:
         error_message = str(e).lower()
         is_transient = any(term in error_message for term in [
@@ -321,8 +482,8 @@ def call_mistral_with_retry(client, model, messages, temperature):
 client = None
 try:
     # Parse the URL to get components
-    use_https = WEAVIATE_URL.startswith("https://")
-    host_part = WEAVIATE_URL.replace("http://", "").replace("https://", "")
+    use_https = settings.WEAVIATE_URL.startswith("https://")
+    host_part = settings.WEAVIATE_URL.replace("http://", "").replace("https://", "")
     
     # Handle port if specified
     if ":" in host_part:
@@ -344,16 +505,16 @@ try:
             timeout=Timeout(init=60, query=30, insert=30)
         )
     )
-    logger.info(f"Connected to Weaviate at {WEAVIATE_URL}")
+    logger.info(f"Connected to Weaviate at {settings.WEAVIATE_URL}")
 except Exception as e:
     logger.error(f"Failed to connect to Weaviate: {str(e)}")
 
 # Mistral client initialization
 mistral_client = None
-if MISTRAL_API_KEY:
+if settings.MISTRAL_API_KEY:
     try:
-        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
-        logger.info("Mistral client initialized, using model: " + MISTRAL_MODEL)
+        mistral_client = Mistral(api_key=settings.MISTRAL_API_KEY)
+        logger.info("Mistral client initialized, using model: " + settings.MISTRAL_MODEL)
     except Exception as e:
         logger.error(f"Failed to initialize Mistral client: {str(e)}")
 
@@ -368,7 +529,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize the chat logger
     global chat_logger
-    log_dir = os.getenv("CHAT_LOG_DIR", "chat_data")
+    log_dir = settings.CHAT_LOG_DIR
     chat_logger = ChatLogger(log_dir=log_dir)
     logger.info(f"Chat logger initialized in {log_dir}")
     
@@ -403,30 +564,84 @@ async def lifespan(app: FastAPI):
         # Try a simple test query to validate API key and connectivity
         try:
             test_response = mistral_client.chat.complete(
-                model=MISTRAL_MODEL,
+                model=settings.MISTRAL_MODEL,
                 messages=[{"role": "user", "content": "Hello"}],
                 max_tokens=5
             )
-            logger.info(f"Mistral API: Connection successful, using model {MISTRAL_MODEL}")
+            logger.info(f"Mistral API: Connection successful, using model {settings.MISTRAL_MODEL}")
         except Exception as e:
             logger.error(f"CRITICAL: Mistral API test failed: {str(e)}")
     
     # Log configuration
-    logger.info(f"Configuration: DAILY_TOKEN_BUDGET={DAILY_TOKEN_BUDGET}, MAX_REQUESTS_PER_MINUTE={MAX_REQUESTS_PER_MINUTE}")
+    logger.info(f"Configuration: DAILY_TOKEN_BUDGET={settings.DAILY_TOKEN_BUDGET}, MAX_REQUESTS_PER_MINUTE={settings.MAX_REQUESTS_PER_MINUTE}")
     logger.info("Startup validation complete")
     
     yield  # Here the app runs
     
     # Shutdown logic
     logger.info("Shutting down application...")
-    # Close any open connections, etc.
+    
+    # Properly close the chat logger
+    if chat_logger:
+        await chat_logger.close()
+    
+    # Close Weaviate client if needed
+    if client:
+        client.close()
 
 # Create FastAPI app with lifespan
-app = FastAPI(title="EU-Compliant RAG API", lifespan=lifespan)
+app = FastAPI(
+    title="EU-Compliant RAG API", 
+    description="An EU-compliant RAG implementation using Weaviate and Mistral AI",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# API Key security scheme
+api_key_header = APIKeyHeader(name="X-API-Key")
+
+async def get_api_key(
+    api_key: str = Depends(api_key_header)
+) -> str:
+    """
+    Validate API key for protected endpoints.
+    
+    Args:
+        api_key: API key from request header
+        
+    Returns:
+        str: The validated API key
+        
+    Raises:
+        HTTPException: If API key is invalid
+    """
+    # Skip validation if no key file is configured
+    if not os.path.exists(settings.INTERNAL_API_KEY_FILE):
+        logger.warning(f"API key file not found: {settings.INTERNAL_API_KEY_FILE}")
+        return api_key
+    
+    try:
+        with open(settings.INTERNAL_API_KEY_FILE, "r") as f:
+            expected_key = f.read().strip()
+        
+        if api_key != expected_key:
+            raise HTTPException(
+                status_code=403, 
+                detail="Invalid API key"
+            )
+        
+        return api_key
+    except Exception as e:
+        logger.error(f"Error validating API key: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Error validating API key"
+        )
 
 # Basic endpoints
 @app.get("/")
 async def root():
+    """Root endpoint to check if the API is running."""
     return {"message": "EU-Compliant RAG API is running"}
 
 @app.get("/status")
@@ -442,8 +657,23 @@ async def status():
 
 # Document search endpoints
 @app.post("/search")
-async def search_documents(query: Query):
-    """Search for relevant document chunks without LLM generation."""
+async def search_documents(
+    query: Query,
+    api_key: str = Depends(get_api_key)
+):
+    """
+    Search for relevant document chunks without LLM generation.
+    
+    Args:
+        query: The search query
+        api_key: API key for authentication
+        
+    Returns:
+        dict: Search results
+        
+    Raises:
+        HTTPException: If search fails
+    """
     if not client:
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
     
@@ -473,7 +703,15 @@ async def search_documents(query: Query):
 
 @app.get("/documents/count")
 async def count_documents():
-    """Count the number of unique documents indexed in the system."""
+    """
+    Count the number of unique documents indexed in the system.
+    
+    Returns:
+        dict: Count of unique documents and their filenames
+        
+    Raises:
+        HTTPException: If counting fails
+    """
     if not client:
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
     
@@ -494,7 +732,7 @@ async def count_documents():
         
         return {
             "count": len(unique_filenames),
-            "documents": list(unique_filenames)
+            "documents": sorted(list(unique_filenames))
         }
         
     except Exception as e:
@@ -505,7 +743,12 @@ async def count_documents():
 async def get_document_statistics():
     """
     Get comprehensive statistics about documents in the system.
-    Returns counts, document metadata, and processing information.
+    
+    Returns:
+        dict: Document statistics including counts, metadata, and processing information
+        
+    Raises:
+        HTTPException: If statistics gathering fails
     """
     if not client:
         raise HTTPException(status_code=503, detail="Weaviate connection not available")
@@ -583,24 +826,39 @@ async def get_document_statistics():
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")  
 
 # Chat endpoint
-@app.post("/chat")
+@app.post("/chat", response_model=APIResponse)
 async def chat(
     query: Query, 
     background_tasks: BackgroundTasks,
+    api_key: str = Depends(get_api_key),
     user_id: Optional[str] = Header(None)
 ):
-    """RAG-based chat endpoint that queries documents and generates a response."""
+    """
+    RAG-based chat endpoint that queries documents and generates a response.
+    
+    Args:
+        query: The user's question
+        background_tasks: FastAPI background tasks
+        api_key: API key for authentication
+        user_id: Optional user identifier for logging
+        
+    Returns:
+        APIResponse: Generated answer with source citations
+        
+    Raises:
+        HTTPException: If the chat process fails
+    """
     request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
     
     logger.info(f"[{request_id}] Chat request received: {query.question[:50] + '...' if len(query.question) > 50 else query.question}")
 
     # Check rate limit first
     if not check_rate_limit():
-        return {
-            "answer": "The system is currently processing too many requests. Please try again in a minute.",
-            "sources": [],
-            "error": "rate_limited"
-        }    
+        return APIResponse(
+            answer="The system is currently processing too many requests. Please try again in a minute.",
+            sources=[],
+            error="rate_limited"
+        )    
 
     if not client:
         logger.error(f"[{request_id}] Weaviate connection not available")
@@ -623,10 +881,10 @@ async def chat(
         
         # Check if we got any results
         if len(search_result.objects) == 0:
-            return {
-                "answer": "I couldn't find any relevant information to answer your question.",
-                "sources": []
-            }
+            return APIResponse(
+                answer="I couldn't find any relevant information to answer your question.",
+                sources=[]
+            )
         
         # Log search results
         logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")
@@ -644,8 +902,6 @@ async def chat(
 
         context = "\n\n".join(context_sections)
         
-        # Format context from chunks
-        # context = "\n\n".join([obj.properties["content"] for obj in search_result.objects])
         logger.info(f"[{request_id}] Context size: {len(context)} characters")
 
         # Create a hash of the query and context to use as cache key
@@ -654,10 +910,10 @@ async def chat(
         cache_key = f"{query_text}_{context_hash}"
         
         # Check cache first
-        cached_result = get_cached_response(cache_key, MISTRAL_MODEL)
+        cached_result = get_cached_response(cache_key, settings.MISTRAL_MODEL)
         if cached_result:
             logger.info(f"[{request_id}] Cache hit! Returning cached response")
-            return cached_result
+            return APIResponse(**cached_result)
 
         # Estimate tokens (very roughly - ~4 chars per token)
         estimated_prompt_tokens = (len(query.question) + len(context)) // 4
@@ -666,14 +922,14 @@ async def chat(
         
         # Check if we have budget
         if not check_token_budget(total_estimated_tokens):
-            return {
-                "answer": "I'm sorry, the daily query limit has been reached to control costs. Please try again tomorrow.",
-                "sources": [],
-                "error": "budget_exceeded"
-            }
+            return APIResponse(
+                answer="I'm sorry, the daily query limit has been reached to control costs. Please try again tomorrow.",
+                sources=[],
+                error="budget_exceeded"
+            )
         
         # Log generation attempt
-        logger.info(f"[{request_id}] Sending request to Mistral API using model: {MISTRAL_MODEL}")
+        logger.info(f"[{request_id}] Sending request to Mistral API using model: {settings.MISTRAL_MODEL}")
         
         start_time = time.time()        
 
@@ -709,9 +965,9 @@ async def chat(
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query.question}"}
         ]
         
-        chat_response = call_mistral_with_retry(
+        chat_response = await call_mistral_with_retry(
             client=mistral_client,
-            model=MISTRAL_MODEL,
+            model=settings.MISTRAL_MODEL,
             messages=messages,
             temperature=0.7,
         )
@@ -736,7 +992,7 @@ async def chat(
 
         # Cache the result before returning
         result = {"answer": answer, "sources": sources}
-        set_cached_response(cache_key, MISTRAL_MODEL, result)
+        set_cached_response(cache_key, settings.MISTRAL_MODEL, result)
 
         # Log the interaction in the background, using background_tasks to avoid delaying the response
         if chat_logger and chat_logger.enabled:
@@ -746,7 +1002,7 @@ async def chat(
             }
             
             background_tasks.add_task(
-                chat_logger.log_interaction,
+                log_chat_interaction,
                 query=query.question,
                 response=result,
                 request_id=request_id,
@@ -754,14 +1010,50 @@ async def chat(
                 metadata=metadata
             )
             
-        return result
+        return APIResponse(**result)
             
     except Exception as e:
-        return handle_api_error(e, request_id)
+        error_response = handle_api_error(e, request_id)
+        return APIResponse(**error_response)
+
+async def log_chat_interaction(
+    query: str,
+    response: Dict[str, Any],
+    request_id: str,
+    user_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Background task to log chat interactions.
+    This runs asynchronously to avoid delaying the response.
+    
+    Args:
+        query: The user's query
+        response: The system's response
+        request_id: Request identifier
+        user_id: Optional user identifier
+        metadata: Optional additional metadata
+    """
+    if chat_logger and chat_logger.enabled:
+        try:
+            await chat_logger.log_interaction(
+                query=query,
+                response=response,
+                request_id=request_id,
+                user_id=user_id,
+                metadata=metadata
+            )
+        except Exception as e:
+            logger.error(f"Error logging chat interaction: {str(e)}")
     
 @app.get("/privacy", response_class=HTMLResponse)
 async def privacy_notice():
-    """Serve the privacy notice."""
+    """
+    Serve the privacy notice.
+    
+    Returns:
+        HTMLResponse: HTML content of the privacy notice
+    """
     try:
         privacy_path = pathlib.Path("privacy_notice.html")
         if privacy_path.exists():
@@ -792,6 +1084,16 @@ async def privacy_notice():
 # 1. First registered (executed last): Add security headers
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    """
+    Middleware to add security headers to responses.
+    
+    Args:
+        request: The incoming request
+        call_next: The next middleware or route handler
+        
+    Returns:
+        Response: The response with added security headers
+    """
     response = await call_next(request)
 
     # Only add CSP headers for non-documentation endpoints
@@ -806,6 +1108,19 @@ async def add_security_headers(request: Request, call_next):
 # 2. Second registered (executed second): API key verification
 @app.middleware("http")
 async def verify_internal_api_key(request: Request, call_next):
+    """
+    Middleware to verify internal API key for protected endpoints.
+    
+    Args:
+        request: The incoming request
+        call_next: The next middleware or route handler
+        
+    Returns:
+        Response: The response
+        
+    Raises:
+        HTTPException: If API key is invalid
+    """
     # Skip check for non-protected endpoints
     if request.url.path in ["/", "/status", "/docs", "/openapi.json", "/privacy", "/statistics", "/documents/count"] or request.url.path.startswith("/docs/"):
         return await call_next(request)
@@ -813,7 +1128,7 @@ async def verify_internal_api_key(request: Request, call_next):
     # Only check API key for protected endpoints
     try:
         # Get the API key from environment
-        api_key_file = os.environ.get("INTERNAL_API_KEY_FILE")
+        api_key_file = settings.INTERNAL_API_KEY_FILE
         if not api_key_file or not os.path.exists(api_key_file):
             # If API key file isn't set or doesn't exist, log a warning and continue
             logger.warning(f"API key file not found: {api_key_file}")
@@ -841,6 +1156,19 @@ async def verify_internal_api_key(request: Request, call_next):
 # 3. Last registered (executed first): Rate limiting
 @app.middleware("http")
 async def rate_limit_by_ip(request: Request, call_next):
+    """
+    Middleware to rate limit requests by IP address.
+    
+    Args:
+        request: The incoming request
+        call_next: The next middleware or route handler
+        
+    Returns:
+        Response: The response
+        
+    Raises:
+        HTTPException: If rate limit is exceeded
+    """
     # Get client IP
     client_ip = request.client.host
     
@@ -850,7 +1178,7 @@ async def rate_limit_by_ip(request: Request, call_next):
                                      if now - timestamp < 60]
     
     # Check limits
-    if len(ip_request_counters[client_ip]) >= MAX_REQUESTS_PER_MINUTE:
+    if len(ip_request_counters[client_ip]) >= settings.MAX_REQUESTS_PER_MINUTE:
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     
     # Add current timestamp
@@ -862,11 +1190,70 @@ async def rate_limit_by_ip(request: Request, call_next):
 # 4. Register exception handlers
 @app.exception_handler(404)
 async def not_found_exception(request, exc):
+    """
+    Exception handler for 404 Not Found errors.
+    
+    Args:
+        request: The request that caused the exception
+        exc: The exception
+        
+    Returns:
+        JSONResponse: A JSON response with the error message
+    """
     return JSONResponse(status_code=404, content={"error": "Not Found"})
+
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request, exc):
+    """
+    Exception handler for Pydantic validation errors.
+    
+    Args:
+        request: The request that caused the exception
+        exc: The validation exception
+        
+    Returns:
+        JSONResponse: A JSON response with validation error details
+    """
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Validation Error",
+            "detail": exc.errors()
+        }
+    )
+
+@app.exception_handler(500)
+async def internal_error_handler(request, exc):
+    """
+    Exception handler for internal server errors.
+    
+    Args:
+        request: The request that caused the exception
+        exc: The exception
+        
+    Returns:
+        JSONResponse: A JSON response with error information
+    """
+    # Log the error
+    logger.error(f"Internal server error: {str(exc)}")
+    import traceback
+    logger.error(traceback.format_exc())
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "detail": "An unexpected error occurred. Please try again later."
+        }
+    )
     
 # Main entry point
 if __name__ == "__main__":
     import uvicorn
 
-    check_secret_age("/run/secrets/mistral_api_key")
+    # Check secrets age
+    check_secret_age(settings.MISTRAL_API_KEY_FILE)
+    check_secret_age(settings.INTERNAL_API_KEY_FILE)
+    
+    # Start the server
     uvicorn.run(app, host="0.0.0.0", port=8000)
