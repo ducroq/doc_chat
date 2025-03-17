@@ -5,23 +5,110 @@ import time
 import logging
 import uuid
 import glob
+import asyncio
+from enum import Enum
+from concurrent.futures import ThreadPoolExecutor
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from pathlib import Path
+from typing import (
+    Optional, List, Dict, Any, Union, Tuple, Set, 
+    TypedDict, Callable, Iterable, Generator
+)
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from weaviate.classes.config import Configure, DataType
+from weaviate.classes.query import Filter
 from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Type definitions
+class ChunkMetadata(TypedDict, total=False):
+    """Type definition for chunk metadata."""
+    page: Optional[int]
+    heading: Optional[str]
+    level: Optional[int]
+    itemType: Optional[str]
+    title: Optional[str]
+    date: Optional[str]
+    creators: Optional[List[Dict[str, str]]]
+
+class TextChunk(TypedDict):
+    """Type definition for a text chunk."""
+    content: str
+    page: Optional[int]
+    heading: Optional[str]
+    level: Optional[int]
+
+class ProcessingResult(TypedDict):
+    """Type definition for processing result."""
+    success: bool
+    message: str
+    chunks_processed: int
+    file_path: str
+    metadata: Optional[Dict[str, Any]]
+
+class ProcessingStats(TypedDict):
+    """Type definition for processing statistics."""
+    total: int
+    processed: int
+    skipped: int
+    failed: int
+    start_time: float
+    duration: Optional[float]
+
+class ChunkingStrategy(str, Enum):
+    """Enum for different chunking strategies."""
+    SIMPLE = "simple"           # Simple character-based chunking
+    PARAGRAPH = "paragraph"     # Paragraph-based chunking
+    SECTION = "section"         # Section-based (using headings)
+    SEMANTIC = "semantic"       # Semantic chunking using AI
+
+# Configuration class
+class ProcessorConfig:
+    """
+    Configuration for document processor.
+    
+    Attributes:
+        WEAVIATE_URL (str): URL for the Weaviate instance
+        DATA_FOLDER (str): Folder to watch for documents
+        CHUNK_SIZE (int): Default size of text chunks
+        CHUNK_OVERLAP (int): Default overlap between chunks
+        CHUNKING_STRATEGY (ChunkingStrategy): Strategy for chunking text
+        MAX_RETRIES (int): Maximum number of retries for database operations
+        RETRY_DELAY (int): Delay between retries in seconds
+        FILE_EXTENSIONS (List[str]): Supported file extensions
+        MAX_WORKER_THREADS (int): Maximum number of worker threads
+        BATCH_SIZE (int): Number of chunks to process in a batch
+    """
+    
+    WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
+    DATA_FOLDER = os.getenv("DATA_FOLDER", "/data")
+    CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1000"))
+    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))
+    CHUNKING_STRATEGY = ChunkingStrategy(os.getenv("CHUNKING_STRATEGY", "section"))
+    MAX_RETRIES = int(os.getenv("MAX_RETRIES", "10"))
+    RETRY_DELAY = int(os.getenv("RETRY_DELAY", "5"))
+    FILE_EXTENSIONS = [".md", ".txt"]  # Supported file extensions
+    MAX_WORKER_THREADS = int(os.getenv("MAX_WORKER_THREADS", "5"))
+    BATCH_SIZE = int(os.getenv("BATCH_SIZE", "10"))
+
+config = ProcessorConfig()
 
 # ------------ Utility Functions ------------
-def chunk_text(text, max_chunk_size=1000, overlap=200):
+def chunk_text(
+    text: str,
+    max_chunk_size: int = config.CHUNK_SIZE,
+    overlap: int = config.CHUNK_OVERLAP,
+    chunking_strategy: ChunkingStrategy = config.CHUNKING_STRATEGY
+) -> List[TextChunk]:
     """
     Split text into overlapping chunks, respecting Markdown structure and sentence boundaries.
     
@@ -46,19 +133,30 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
     - Preserving paragraph and sentence boundaries when possible
     
     Args:
-        text (str): The Markdown text to chunk
-        max_chunk_size (int): Maximum size of each chunk in characters
-        overlap (int): Number of characters to overlap between chunks
+        text: The Markdown text to chunk
+        max_chunk_size: Maximum size of each chunk in characters
+        overlap: Number of characters to overlap between chunks
+        chunking_strategy: Strategy to use for chunking
         
     Returns:
-        list: List of dictionaries with the following keys:
-            - content: The text content of the chunk
-            - page: The page number
-            - heading: The heading text for the section
-            - level: The heading level (1 for #, 2 for ##, etc.)
+        List[TextChunk]: List of chunks with metadata
     """
+    # Input validation
+    if not text:
+        logger.warning("Empty text provided to chunk_text")
+        return []
+    
+    if max_chunk_size <= 0:
+        logger.warning(f"Invalid max_chunk_size: {max_chunk_size}, using default")
+        max_chunk_size = config.CHUNK_SIZE
+        
+    if overlap < 0 or overlap >= max_chunk_size:
+        logger.warning(f"Invalid overlap: {overlap}, using default")
+        overlap = config.CHUNK_OVERLAP
+    
     # Helper function for language-agnostic sentence splitting
-    def split_into_sentences(text):
+    def split_into_sentences(text: str) -> List[str]:
+        """Split text into sentences, handling multiple languages."""
         # This pattern works for many European languages
         # It looks for periods, question marks, or exclamation points
         # followed by spaces and capital letters
@@ -142,95 +240,164 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
             })
     
     # Now chunk each section with sentence boundary detection
-    chunks = []
-    for section in sections:
-        section_text = section["text"]
-        section_heading = section["heading"]
-        section_page = section["page"]
-        section_level = section["level"]
-        
-        # Skip heading line itself when chunking
-        content_start = section_text.find('\n')
-        if content_start > 0:
-            content = section_text[content_start:].strip()
-        else:
-            content = section_text.strip()
-        
-        if not content:
-            continue  # Skip empty sections
-        
-        # For very small sections, keep them as a single chunk
-        if len(content) <= max_chunk_size:
-            chunks.append({
-                "content": content,
-                "page": section_page,
-                "heading": section_heading,
-                "level": section_level
-            })
-            continue
-        
-        # Split content into paragraphs
-        paragraphs = content.split('\n\n')
-        current_chunk = ""
-        current_sentences = []
-        
-        for paragraph in paragraphs:
-            # Split paragraph into sentences using our language-agnostic approach
-            sentences = split_into_sentences(paragraph)
-            
-            # Process each sentence
-            for sentence in sentences:
-                # If adding this sentence would exceed max size and we already have content
-                if len(current_chunk) + len(sentence) + 2 > max_chunk_size and current_chunk:  # +2 for the newline
+    chunks: List[TextChunk] = []
+    
+    # Use the appropriate chunking strategy
+    if chunking_strategy == ChunkingStrategy.SIMPLE:
+        # Simple character-based chunking without respecting structure
+        for section in sections:
+            section_text = section["text"]
+            for i in range(0, len(section_text), max_chunk_size - overlap):
+                chunk_text = section_text[i:i + max_chunk_size]
+                if chunk_text.strip():
                     chunks.append({
-                        "content": current_chunk.strip(),
-                        "page": section_page,
-                        "heading": section_heading,
-                        "level": section_level
+                        "content": chunk_text,
+                        "page": section["page"],
+                        "heading": section["heading"],
+                        "level": section["level"]
                     })
-                    
-                    # For overlap, include sentences from the previous chunk
-                    overlap_text = ""
-                    overlap_size = 0
-                    
-                    # Work backwards through sentences to create overlap
-                    for prev_sentence in reversed(current_sentences):
-                        if overlap_size + len(prev_sentence) + 1 <= overlap:  # +1 for space
-                            overlap_text = prev_sentence + " " + overlap_text
-                            overlap_size += len(prev_sentence) + 1
-                        else:
-                            break
-                    
-                    # Start a new chunk with the overlap plus current sentence
-                    current_chunk = overlap_text + sentence
-                    current_sentences = [sentence]
-                else:
-                    if current_chunk:
-                        current_chunk += " " + sentence
-                    else:
-                        current_chunk = sentence
-                    current_sentences.append(sentence)
+    elif chunking_strategy == ChunkingStrategy.PARAGRAPH:
+        # Paragraph-aware chunking
+        for section in sections:
+            section_text = section["text"]
+            paragraphs = section_text.split('\n\n')
+            current_chunk = ""
             
-            # Add paragraph separator if this isn't the last paragraph
-            if current_chunk and paragraph != paragraphs[-1]:
-                current_chunk += "\n\n"
-                current_sentences.append("\n\n")
-        
-        # Add the last chunk from this section
-        if current_chunk:
-            chunks.append({
-                "content": current_chunk.strip(),
-                "page": section_page,
-                "heading": section_heading,
-                "level": section_level
-            })
+            for paragraph in paragraphs:
+                if len(current_chunk) + len(paragraph) + 2 <= max_chunk_size:
+                    if current_chunk:
+                        current_chunk += "\n\n" + paragraph
+                    else:
+                        current_chunk = paragraph
+                else:
+                    # Store current chunk if not empty
+                    if current_chunk:
+                        chunks.append({
+                            "content": current_chunk,
+                            "page": section["page"],
+                            "heading": section["heading"],
+                            "level": section["level"]
+                        })
+                    
+                    # Start a new chunk with overlap if the paragraph is too large
+                    if len(paragraph) > max_chunk_size:
+                        # Recursively chunk large paragraphs
+                        for i in range(0, len(paragraph), max_chunk_size - overlap):
+                            sub_chunk = paragraph[i:i + max_chunk_size]
+                            if sub_chunk.strip():
+                                chunks.append({
+                                    "content": sub_chunk,
+                                    "page": section["page"],
+                                    "heading": section["heading"],
+                                    "level": section["level"]
+                                })
+                        current_chunk = ""
+                    else:
+                        current_chunk = paragraph
+            
+            # Add the last chunk if not empty
+            if current_chunk:
+                chunks.append({
+                    "content": current_chunk,
+                    "page": section["page"],
+                    "heading": section["heading"],
+                    "level": section["level"]
+                })
+    else:
+        # Default to section-based chunking with sentence awareness (SECTION strategy)
+        for section in sections:
+            section_text = section["text"]
+            section_heading = section["heading"]
+            section_page = section["page"]
+            section_level = section["level"]
+            
+            # Skip heading line itself when chunking
+            content_start = section_text.find('\n')
+            if content_start > 0:
+                content = section_text[content_start:].strip()
+            else:
+                content = section_text.strip()
+            
+            if not content:
+                continue  # Skip empty sections
+            
+            # For very small sections, keep them as a single chunk
+            if len(content) <= max_chunk_size:
+                chunks.append({
+                    "content": content,
+                    "page": section_page,
+                    "heading": section_heading,
+                    "level": section_level
+                })
+                continue
+            
+            # Split content into paragraphs
+            paragraphs = content.split('\n\n')
+            current_chunk = ""
+            current_sentences = []
+            
+            for paragraph in paragraphs:
+                # Split paragraph into sentences using our language-agnostic approach
+                sentences = split_into_sentences(paragraph)
+                
+                # Process each sentence
+                for sentence in sentences:
+                    # If adding this sentence would exceed max size and we already have content
+                    if len(current_chunk) + len(sentence) + 2 > max_chunk_size and current_chunk:  # +2 for the newline
+                        chunks.append({
+                            "content": current_chunk.strip(),
+                            "page": section_page,
+                            "heading": section_heading,
+                            "level": section_level
+                        })
+                        
+                        # For overlap, include sentences from the previous chunk
+                        overlap_text = ""
+                        overlap_size = 0
+                        
+                        # Work backwards through sentences to create overlap
+                        for prev_sentence in reversed(current_sentences):
+                            if overlap_size + len(prev_sentence) + 1 <= overlap:  # +1 for space
+                                overlap_text = prev_sentence + " " + overlap_text
+                                overlap_size += len(prev_sentence) + 1
+                            else:
+                                break
+                        
+                        # Start a new chunk with the overlap plus current sentence
+                        current_chunk = overlap_text + sentence
+                        current_sentences = [sentence]
+                    else:
+                        if current_chunk:
+                            current_chunk += " " + sentence
+                        else:
+                            current_chunk = sentence
+                        current_sentences.append(sentence)
+                
+                # Add paragraph separator if this isn't the last paragraph
+                if current_chunk and paragraph != paragraphs[-1]:
+                    current_chunk += "\n\n"
+                    current_sentences.append("\n\n")
+            
+            # Add the last chunk from this section
+            if current_chunk:
+                chunks.append({
+                    "content": current_chunk.strip(),
+                    "page": section_page,
+                    "heading": section_heading,
+                    "level": section_level
+                })
     
     return chunks
 
-def detect_file_encoding(file_path):
+def detect_file_encoding(file_path: str) -> Tuple[bool, str]:
     """
     Validate that a file is a readable text file and return the correct encoding.
-    Returns (is_valid, encoding or error_message)
+    
+    Args:
+        file_path: Path to the file to check
+        
+    Returns:
+        Tuple[bool, str]: (is_valid, encoding or error_message)
     """
     # Expanded list of encodings to try
     encodings = ['utf-8', 'utf-8-sig', 'latin1', 'cp1252', 'utf-16', 'utf-16-le', 'utf-16-be']
@@ -238,6 +405,17 @@ def detect_file_encoding(file_path):
     # Check if file exists
     if not os.path.exists(file_path):
         return False, "File does not exist"
+    
+    # Check if it's actually a file
+    if not os.path.isfile(file_path):
+        return False, "Path exists but is not a file"
+    
+    # Check for zero-length files
+    try:
+        if os.path.getsize(file_path) == 0:
+            return False, "File is empty"
+    except OSError as e:
+        return False, f"Error checking file size: {str(e)}"
     
     # Try to read with each encoding
     for encoding in encodings:
@@ -248,13 +426,32 @@ def detect_file_encoding(file_path):
                 return True, encoding
         except UnicodeDecodeError:
             continue
-        except Exception as e:
+        except PermissionError as e:
+            return False, f"Permission error reading file: {str(e)}"
+        except OSError as e:
             return False, f"Error reading file: {str(e)}"
     
     return False, "Could not decode with any supported encoding"
 
-def connect_with_retry(weaviate_url, max_retries=10, retry_delay=5):
-    """Connect to Weaviate with retry mechanism."""
+async def connect_with_retry(
+    weaviate_url: str,
+    max_retries: int = config.MAX_RETRIES,
+    retry_delay: int = config.RETRY_DELAY
+) -> weaviate.Client:
+    """
+    Connect to Weaviate with retry mechanism.
+    
+    Args:
+        weaviate_url: URL of the Weaviate instance
+        max_retries: Maximum number of retry attempts
+        retry_delay: Delay between retries in seconds
+        
+    Returns:
+        weaviate.Client: Connected Weaviate client
+        
+    Raises:
+        ConnectionError: If connection fails after max retries
+    """
     # Parse the URL to get components
     use_https = weaviate_url.startswith("https://")
     host_part = weaviate_url.replace("http://", "").replace("https://", "")
@@ -293,27 +490,52 @@ def connect_with_retry(weaviate_url, max_retries=10, retry_delay=5):
                 return client
             else:
                 logger.warning("Weaviate client not ready yet")
+                raise ConnectionError("Weaviate client not ready")
         except Exception as e:
             last_exception = e
             logger.warning(f"Connection attempt {retries+1} failed: {str(e)}")
         
         # Wait before retry
         logger.info(f"Waiting {retry_delay} seconds before retry...")
-        time.sleep(retry_delay)
+        await asyncio.sleep(retry_delay)
         retries += 1
     
     # If we get here, all retries failed
-    raise Exception(f"Failed to connect to Weaviate after {max_retries} attempts. Last error: {str(last_exception)}")
+    error_message = f"Failed to connect to Weaviate after {max_retries} attempts. Last error: {str(last_exception)}"
+    logger.error(error_message)
+    raise ConnectionError(error_message)
 
 # ------------ Document Storage Class ------------
 
 class DocumentStorage:
-    def __init__(self, weaviate_client):
-        """Initialize storage with a Weaviate client connection."""
+    """
+    Storage class for managing document chunks in Weaviate.
+    
+    This class handles:
+    - Setting up the Weaviate schema
+    - Deleting existing chunks
+    - Storing new chunks with metadata
+    
+    Attributes:
+        client: Weaviate client connection
+    """
+    
+    def __init__(self, weaviate_client: weaviate.Client):
+        """
+        Initialize storage with a Weaviate client connection.
+        
+        Args:
+            weaviate_client: Connected Weaviate client instance
+        """
         self.client = weaviate_client
         
-    def setup_schema(self):
-        """Set up the Weaviate schema for document chunks."""
+    async def setup_schema(self) -> bool:
+        """
+        Set up the Weaviate schema for document chunks.
+        
+        Returns:
+            bool: True if setup was successful, False otherwise
+        """
         start_time = time.time()
         logger.info("Setting up Weaviate schema for document chunks")
         
@@ -352,13 +574,23 @@ class DocumentStorage:
                 
             setup_time = time.time() - start_time
             logger.info(f"Schema setup complete in {setup_time:.2f}s")
+            return True
         except Exception as e:
             logger.error(f"Error setting up Weaviate schema: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
+            return False
 
-    def delete_chunks(self, filename):
-        """Delete all chunks associated with a specific filename."""
+    async def delete_chunks(self, filename: str) -> int:
+        """
+        Delete all chunks associated with a specific filename.
+        
+        Args:
+            filename: The filename to delete chunks for
+            
+        Returns:
+            int: Number of chunks deleted
+        """
         start_time = time.time()
         logger.info(f"Deleting chunks for file: {filename}")
         
@@ -366,8 +598,7 @@ class DocumentStorage:
             # Get the collection
             collection = self.client.collections.get("DocumentChunk")
             
-            # Create a proper filter for Weaviate 4.x
-            from weaviate.classes.query import Filter
+            # Create a proper filter for Weaviate
             where_filter = Filter.by_property("filename").equal(filename)
             
             # Delete using the filter
@@ -378,35 +609,67 @@ class DocumentStorage:
             deletion_time = time.time() - deletion_start
             
             # Log the result
+            deleted_count = 0
             if hasattr(result, 'successful'):
-                logger.info(f"Deleted {result.successful} existing chunks for {filename} in {deletion_time:.2f}s")
+                deleted_count = result.successful
+                logger.info(f"Deleted {deleted_count} existing chunks for {filename} in {deletion_time:.2f}s")
             else:
                 logger.info(f"No existing chunks found for {filename} ({deletion_time:.2f}s)")
                 
             total_time = time.time() - start_time
             logger.debug(f"Total chunk deletion process took {total_time:.2f}s")
+            
+            return deleted_count
                 
         except Exception as e:
             logger.error(f"Error deleting existing chunks: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return 0
 
-    def store_chunk(self, content, filename, chunk_id, metadata=None, page=None, heading=None, level=None):
+    async def store_chunk(
+        self, 
+        content: str, 
+        filename: str, 
+        chunk_id: int, 
+        metadata: Optional[Dict[str, Any]] = None, 
+        page: Optional[int] = None, 
+        heading: Optional[str] = None, 
+        level: Optional[int] = None
+    ) -> bool:
         """
         Store a document chunk in Weaviate with metadata as a JSON string.
         
         Args:
-            content (str): The text content of the chunk
-            filename (str): Source document name
-            chunk_id (int): Sequential ID of the chunk within the document
-            metadata (dict, optional): Document metadata from the .metadata.json file
-            page (int, optional): Page number where this chunk appears
-            heading (str, optional): Section heading text for this chunk
-            level (int, optional): Heading level (1 for #, 2 for ##, etc.)
+            content: The text content of the chunk
+            filename: Source document name
+            chunk_id: Sequential ID of the chunk within the document
+            metadata: Document metadata from the .metadata.json file
+            page: Page number where this chunk appears
+            heading: Section heading text for this chunk
+            level: Heading level (1 for #, 2 for ##, etc.)
+            
+        Returns:
+            bool: True if storage was successful, False otherwise
         """
         start_time = time.time()
         chunk_size = len(content) if isinstance(content, str) else 0
         logger.debug(f"Storing chunk {chunk_id} from {filename} (size: {chunk_size} chars)")
         
         try:
+            # Input validation
+            if not content or not content.strip():
+                logger.warning(f"Empty content for chunk {chunk_id} from {filename}")
+                return False
+                
+            if not filename:
+                logger.warning(f"Missing filename for chunk {chunk_id}")
+                return False
+                
+            if chunk_id < 0:
+                logger.warning(f"Invalid chunk_id: {chunk_id}")
+                return False
+            
             properties = {
                 "content": content,
                 "filename": filename,
@@ -459,31 +722,128 @@ class DocumentStorage:
             
             total_time = time.time() - start_time
             logger.debug(f"Stored chunk {chunk_id} from {filename} (size: {chunk_size} chars) in {total_time:.3f}s (insert: {insert_time:.3f}s)")
+            return True
         except Exception as e:
             logger.error(f"Error storing chunk {chunk_id} from {filename}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return False
                 
-    def get_chunks(self, query, limit=3):
+    async def store_chunks_batch(
+        self, 
+        chunks: List[Dict[str, Any]], 
+        filename: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Tuple[int, int]:
+        """
+        Store multiple chunks in a batch operation.
+        
+        Args:
+            chunks: List of chunk data dictionaries
+            filename: Source document name
+            metadata: Optional document metadata
+            
+        Returns:
+            Tuple[int, int]: (successful_count, failed_count)
+        """
+        if not chunks:
+            logger.warning(f"No chunks provided for {filename}")
+            return 0, 0
+            
+        success_count = 0
+        fail_count = 0
+        
+        # Process in batches to avoid overwhelming the database
+        batch_size = config.BATCH_SIZE
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i:i + batch_size]
+            
+            for idx, chunk in enumerate(batch):
+                chunk_id = i + idx
+                success = await self.store_chunk(
+                    content=chunk["content"],
+                    filename=filename,
+                    chunk_id=chunk_id,
+                    metadata=metadata,
+                    page=chunk.get("page"),
+                    heading=chunk.get("heading"),
+                    level=chunk.get("level")
+                )
+                
+                if success:
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    
+            # Log progress for large batches
+            if len(chunks) > batch_size and i % (batch_size * 5) == 0 and i > 0:
+                logger.info(f"Stored {i}/{len(chunks)} chunks from {filename}")
+        
+        logger.info(f"Batch storage complete for {filename}: {success_count} succeeded, {fail_count} failed")
+        return success_count, fail_count
+
+    async def get_chunks(self, query: str, limit: int = 3) -> List[Dict[str, Any]]:
         """
         Retrieve chunks relevant to a query.
-        Returns a list of chunk objects.
+        
+        Args:
+            query: The search query
+            limit: Maximum number of results to return
+            
+        Returns:
+            List[Dict[str, Any]]: List of chunk objects
         """
         try:
             collection = self.client.collections.get("DocumentChunk")
             results = collection.query.near_text(
                 query=query,
                 limit=limit,
-                return_properties=["content", "filename", "chunkId"]
+                return_properties=["content", "filename", "chunkId", "metadataJson"]
             )
             
-            return results.objects
+            return [obj.properties for obj in results.objects]
         except Exception as e:
             logger.error(f"Error retrieving chunks: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
+            
+    async def get_document_count(self) -> int:
+        """
+        Get the count of unique documents in the database.
+        
+        Returns:
+            int: Number of unique documents
+        """
+        try:
+            collection = self.client.collections.get("DocumentChunk")
+            
+            query_result = collection.query.fetch_objects(
+                return_properties=["filename"],
+                limit=10000  # Practical limit for most cases
+            )
+            
+            unique_filenames = set()
+            for obj in query_result.objects:
+                unique_filenames.add(obj.properties["filename"])
+                
+            return len(unique_filenames)
+        except Exception as e:
+            logger.error(f"Error counting documents: {str(e)}")
+            return -1
 
 # ------------ Processing Tracker Class ------------
 
 class ProcessingTracker:
-    def __init__(self, tracker_file_path="processed_files.json"):
+    """
+    Tracks files that have been processed to avoid redundant processing.
+    
+    Attributes:
+        tracker_file_path: Path to the JSON file storing processing records
+        processed_files: Dictionary of processed files with metadata
+    """
+    
+    def __init__(self, tracker_file_path: str = ".processed_files.json"):
         """
         Initialize a tracker that keeps record of processed files.
         
@@ -495,8 +855,13 @@ class ProcessingTracker:
         self.processed_files = self._load_tracker()
         logger.info(f"Tracker initialized with {len(self.processed_files)} previously processed files")
 
-    def _load_tracker(self):
-        """Load the tracker file or create it if it doesn't exist."""
+    def _load_tracker(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load the tracker file or create it if it doesn't exist.
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: Dictionary of processed files with metadata
+        """
         if os.path.exists(self.tracker_file_path):
             try:
                 logger.info(f"Loading existing tracker file from {self.tracker_file_path}")
@@ -504,29 +869,50 @@ class ProcessingTracker:
                     data = json.load(f)
                     logger.info(f"Successfully loaded tracker with {len(data)} records")
                     return data
+            except json.JSONDecodeError as e:
+                logger.error(f"Error decoding tracker file JSON: {str(e)}")
+                return {}
+            except PermissionError as e:
+                logger.error(f"Permission error reading tracker file: {str(e)}")
+                return {}
             except Exception as e:
                 logger.error(f"Error loading tracker file: {str(e)}")
                 return {}
         logger.info("No existing tracker file found, starting with empty tracking")
         return {}
 
-    def _save_tracker(self):
-        """Save the tracker data to file."""
+    def _save_tracker(self) -> bool:
+        """
+        Save the tracker data to file.
+        
+        Returns:
+            bool: Whether the save was successful
+        """
         try:
             # Ensure directory exists
-            os.makedirs(os.path.dirname(self.tracker_file_path), exist_ok=True)
+            os.makedirs(os.path.dirname(self.tracker_file_path) or '.', exist_ok=True)
             
             with open(self.tracker_file_path, 'w') as f:
                 json.dump(self.processed_files, f, indent=2)
                 
             logger.debug(f"Saved processing tracker to {self.tracker_file_path}")
+            return True
+        except PermissionError as e:
+            logger.error(f"Permission error saving tracker file: {str(e)}")
+            return False
         except Exception as e:
             logger.error(f"Error saving tracker file: {str(e)}")
+            return False
     
-    def should_process_file(self, file_path):
+    def should_process_file(self, file_path: str) -> bool:
         """
         Determine if a file should be processed based on modification time.
-        Returns True if file is new or modified since last processing.
+        
+        Args:
+            file_path: Path to the file to check
+            
+        Returns:
+            bool: True if file is new or modified since last processing
         """
         try:
             file_mod_time = os.path.getmtime(file_path)
@@ -550,13 +936,24 @@ class ProcessingTracker:
             else:
                 logger.debug(f"File {file_key} unchanged since last processing, skipping")
                 return False
+        except FileNotFoundError:
+            logger.warning(f"File not found: {file_path}")
+            return False
         except Exception as e:
             logger.error(f"Error checking file status: {str(e)}")
             # If in doubt, process the file
             return True
 
-    def mark_as_processed(self, file_path):
-        """Mark a file as processed with current timestamps."""
+    def mark_as_processed(self, file_path: str) -> bool:
+        """
+        Mark a file as processed with current timestamps.
+        
+        Args:
+            file_path: Path to the file to mark as processed
+            
+        Returns:
+            bool: Whether marking was successful
+        """
         try:
             file_mod_time = os.path.getmtime(file_path)
             file_key = os.path.basename(file_path)
@@ -570,11 +967,21 @@ class ProcessingTracker:
             }
             self._save_tracker()
             logger.info(f"Marked {file_key} as processed (last modified: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(file_mod_time))})")
+            return True
         except Exception as e:
-            logger.error(f"Error marking file as processed: {str(e)}")            
+            logger.error(f"Error marking file as processed: {str(e)}")
+            return False
     
-    def remove_file(self, filename):
-        """Remove a file from the tracking record."""
+    def remove_file(self, filename: str) -> bool:
+        """
+        Remove a file from the tracking record.
+        
+        Args:
+            filename: Name of the file to remove from tracking
+            
+        Returns:
+            bool: Whether removal was successful
+        """
         try:
             if filename in self.processed_files:
                 logger.info(f"Removing {filename} from processing tracker")
@@ -586,12 +993,22 @@ class ProcessingTracker:
             logger.error(f"Error removing file from tracker: {str(e)}")
             return False
     
-    def get_all_tracked_files(self):
-        """Return a list of all tracked filenames."""
+    def get_all_tracked_files(self) -> List[str]:
+        """
+        Return a list of all tracked filenames.
+        
+        Returns:
+            List[str]: List of tracked filenames
+        """
         return list(self.processed_files.keys())
     
-    def clear_tracking_data(self):
-        """Clear all tracking data."""
+    def clear_tracking_data(self) -> bool:
+        """
+        Clear all tracking data.
+        
+        Returns:
+            bool: Whether clearing was successful
+        """
         try:
             self.processed_files = {}
             self._save_tracker()
@@ -600,11 +1017,93 @@ class ProcessingTracker:
         except Exception as e:
             logger.error(f"Error clearing tracking data: {str(e)}")
             return False
+    
+    async def get_tracking_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about tracked files.
+        
+        Returns:
+            Dict[str, Any]: Statistics about tracked files
+        """
+        stats = {
+            "total_files_tracked": len(self.processed_files),
+            "recently_processed": 0,
+            "oldest_file": None,
+            "newest_file": None,
+            "average_file_age_days": 0
+        }
+        
+        if not self.processed_files:
+            return stats
+            
+        now = time.time()
+        last_24h = now - (24 * 60 * 60)
+        
+        # Calculate stats
+        file_ages = []
+        oldest_time = now
+        oldest_file = None
+        newest_time = 0
+        newest_file = None
+        
+        for filename, data in self.processed_files.items():
+            # Count recently processed files
+            if data.get('last_processed', 0) > last_24h:
+                stats["recently_processed"] += 1
+                
+            # Track file ages
+            mod_time = data.get('last_modified', 0)
+            file_ages.append(now - mod_time)
+            
+            # Track oldest file
+            if mod_time < oldest_time:
+                oldest_time = mod_time
+                oldest_file = filename
+                
+            # Track newest file
+            if mod_time > newest_time:
+                newest_time = mod_time
+                newest_file = filename
+        
+        # Set stats
+        if oldest_file:
+            stats["oldest_file"] = {
+                "name": oldest_file,
+                "modified": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(oldest_time))
+            }
+            
+        if newest_file:
+            stats["newest_file"] = {
+                "name": newest_file,
+                "modified": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(newest_time))
+            }
+            
+        if file_ages:
+            avg_age_seconds = sum(file_ages) / len(file_ages)
+            stats["average_file_age_days"] = round(avg_age_seconds / (24 * 60 * 60), 2)
+            
+        return stats
 
 # ------------ Document Processor Class ------------
 
 class DocumentProcessor:
-    def __init__(self, storage, chunk_size=1000, chunk_overlap=200):
+    """
+    Processes text files into chunks and stores them in a vector database.
+    
+    Attributes:
+        storage: DocumentStorage instance for storing document chunks
+        chunk_size: Maximum size of each text chunk
+        chunk_overlap: Amount of overlap between consecutive chunks
+        chunking_strategy: Strategy to use for chunking text
+    """
+    
+    def __init__(
+        self, 
+        storage: DocumentStorage, 
+        chunk_size: int = config.CHUNK_SIZE, 
+        chunk_overlap: int = config.CHUNK_OVERLAP,
+        chunking_strategy: ChunkingStrategy = config.CHUNKING_STRATEGY
+    ):
         """
         Initialize a document processor that reads and chunks text files.
         
@@ -612,12 +1111,21 @@ class DocumentProcessor:
             storage: DocumentStorage instance for storing document chunks
             chunk_size: Maximum size of each text chunk
             chunk_overlap: Amount of overlap between consecutive chunks
+            chunking_strategy: Strategy to use for chunking text
         """
         self.storage = storage
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.chunking_strategy = chunking_strategy
+        self.metrics = {
+            "files_processed": 0,
+            "files_failed": 0,
+            "chunks_created": 0,
+            "chunks_stored": 0,
+            "processing_time": 0
+        }
     
-    def process_file(self, file_path):
+    async def process_file(self, file_path: str) -> ProcessingResult:
         """
         Process a markdown file: read, chunk, and store in vector database.
         
@@ -628,9 +1136,20 @@ class DocumentProcessor:
             file_path: Path to the markdown file to process
                 
         Returns:
-            bool: True if processing was successful, False otherwise
+            ProcessingResult: Result of the processing operation
         """
         start_time = time.time()
+        file_size = 0
+        chunks_processed = 0
+        
+        # Default result for failures
+        failure_result = ProcessingResult(
+            success=False,
+            message="Processing failed",
+            chunks_processed=0,
+            file_path=file_path,
+            metadata=None
+        )
         
         # Log file size for context
         try:
@@ -646,7 +1165,8 @@ class DocumentProcessor:
         
         if not is_valid:
             logger.error(f"Error processing file {file_path}: {result}")
-            return False
+            failure_result["message"] = f"File validation failed: {result}"
+            return failure_result
         
         # Result is the encoding if valid
         encoding = result
@@ -672,103 +1192,198 @@ class DocumentProcessor:
                     with open(metadata_path, 'r', encoding='utf-8') as meta_file:
                         metadata = json.load(meta_file)
                     logger.info(f"Loaded metadata from {metadata_path}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error parsing metadata JSON from {metadata_path}: {str(e)}")
                 except Exception as e:
                     logger.error(f"Error loading metadata from {metadata_path}: {str(e)}")
             
             # Delete existing chunks for this file if any
             deletion_start = time.time()
-            self.storage.delete_chunks(filename)
+            await self.storage.delete_chunks(filename)
             deletion_time = time.time() - deletion_start
             logger.info(f"Previous chunks deletion completed in {deletion_time:.2f}s")
             
             # Split the content into chunks
             chunk_start = time.time()
-            chunks = chunk_text(content, self.chunk_size, self.chunk_overlap)
+            chunks = chunk_text(
+                content, 
+                self.chunk_size, 
+                self.chunk_overlap,
+                self.chunking_strategy
+            )
             chunk_time = time.time() - chunk_start
             
             # Calculate average chunk size and log
             avg_chunk_size = sum(len(chunk["content"]) for chunk in chunks) / max(len(chunks), 1)
             logger.info(f"Text chunking complete in {chunk_time:.2f}s. Created {len(chunks)} chunks with avg size of {avg_chunk_size:.1f} chars")
             
-            # Store each chunk in Weaviate
+            # Store chunks in Weaviate
             storage_start = time.time()
-            for i, chunk in enumerate(chunks):
-                self.storage.store_chunk(
-                    chunk["content"],
-                    filename, 
-                    i, 
-                    metadata,
-                    page=chunk.get("page"),
-                    heading=chunk.get("heading"),
-                    level=chunk.get("level")
-                )
-                    
-                if i % 5 == 0 and i > 0:  # Log progress every 5 chunks
-                    logger.info(f"Stored {i}/{len(chunks)} chunks from {filename}")
-            
+            success_count, fail_count = await self.storage.store_chunks_batch(chunks, filename, metadata)
             storage_time = time.time() - storage_start
-            logger.info(f"All chunks stored successfully in {storage_time:.2f}s")
+            
+            # Update metrics
+            self.metrics["chunks_created"] += len(chunks)
+            self.metrics["chunks_stored"] += success_count
+            chunks_processed = success_count
+            
+            if fail_count > 0:
+                logger.warning(f"{fail_count} chunks failed to store from {filename}")
             
             total_time = time.time() - start_time
+            self.metrics["processing_time"] += total_time
+            self.metrics["files_processed"] += 1
+            
             logger.info(f"File {filename} processed successfully in total time: {total_time:.2f}s")
-            return True
+            
+            return ProcessingResult(
+                success=True,
+                message=f"Processing successful, stored {success_count} chunks",
+                chunks_processed=chunks_processed,
+                file_path=file_path,
+                metadata=metadata
+            )
                 
+        except UnicodeDecodeError as e:
+            logger.error(f"Unicode decode error processing file {file_path}: {str(e)}")
+            self.metrics["files_failed"] += 1
+            failure_result["message"] = f"Unicode decode error: {str(e)}"
+            return failure_result
+        except PermissionError as e:
+            logger.error(f"Permission error processing file {file_path}: {str(e)}")
+            self.metrics["files_failed"] += 1
+            failure_result["message"] = f"Permission error: {str(e)}"
+            return failure_result
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-            return False
+            self.metrics["files_failed"] += 1
+            failure_result["message"] = f"Processing error: {str(e)}"
+            return failure_result
                     
-    def process_directory(self, directory_path, tracker=None):
+    async def process_directory(
+        self, 
+        directory_path: str, 
+        tracker: Optional[ProcessingTracker] = None,
+        file_extensions: Optional[List[str]] = None
+    ) -> ProcessingStats:
         """
         Process all markdown files in a directory.
         
         Args:
             directory_path: Path to the directory containing text files
             tracker: Optional ProcessingTracker to track processed files
+            file_extensions: Optional list of file extensions to process
             
         Returns:
-            dict: Statistics about the processing (total, processed, failed)
+            ProcessingStats: Statistics about the processing
         """
         start_time = time.time()
         logger.info(f"Scanning for files in {directory_path}")
-        md_files = glob.glob(os.path.join(directory_path, "*.md"))
-        logger.info(f"Found {len(md_files)} markdown files")
         
-        stats = {
-            "total": len(md_files),
+        # Use default extensions if none provided
+        if file_extensions is None:
+            file_extensions = config.FILE_EXTENSIONS
+            
+        # Find all files with the specified extensions
+        all_files = []
+        for ext in file_extensions:
+            all_files.extend(glob.glob(os.path.join(directory_path, f"*{ext}")))
+            
+        logger.info(f"Found {len(all_files)} files with extensions: {', '.join(file_extensions)}")
+        
+        stats: ProcessingStats = {
+            "total": len(all_files),
             "processed": 0,
             "skipped": 0,
-            "failed": 0
+            "failed": 0,
+            "start_time": start_time,
+            "duration": None
         }
         
-        for i, file_path in enumerate(md_files):
-            logger.info(f"Processing file {i+1}/{len(md_files)}: {os.path.basename(file_path)}")
-            # If tracker is provided, check if file needs processing
+        # Filter files if tracker is provided
+        files_to_process = []
+        for file_path in all_files:
             if tracker and not tracker.should_process_file(file_path):
                 logger.info(f"Skipping already processed file: {file_path}")
                 stats["skipped"] += 1
-                continue
-                
-            # Process the file
-            success = self.process_file(file_path)
-            
-            # Update tracking and stats
-            if success:
-                stats["processed"] += 1
-                if tracker:
-                    tracker.mark_as_processed(file_path)
             else:
-                stats["failed"] += 1
+                files_to_process.append(file_path)
+        
+        # Process files concurrently
+        if files_to_process:
+            # Create tasks for each file
+            tasks = [self.process_file(file_path) for file_path in files_to_process]
+            
+            # Process in batches to avoid overwhelming resources
+            batch_size = config.BATCH_SIZE
+            for i in range(0, len(tasks), batch_size):
+                batch = tasks[i:i + batch_size]
+                
+                # Process the batch of files concurrently
+                batch_results = await asyncio.gather(*batch, return_exceptions=True)
+                
+                # Handle results
+                for j, result in enumerate(batch_results):
+                    file_path = files_to_process[i + j]
+                    
+                    if isinstance(result, Exception):
+                        logger.error(f"Exception processing {file_path}: {str(result)}")
+                        stats["failed"] += 1
+                    elif result["success"]:
+                        stats["processed"] += 1
+                        if tracker:
+                            tracker.mark_as_processed(file_path)
+                    else:
+                        stats["failed"] += 1
+                        logger.error(f"Failed to process {file_path}: {result['message']}")
+                
+                # Log progress for large batches
+                if len(files_to_process) > batch_size and i > 0:
+                    logger.info(f"Processed {i + len(batch)}/{len(files_to_process)} files")
         
         process_time = time.time() - start_time
+        stats["duration"] = process_time
         logger.info(f"Directory processing complete in {process_time:.2f}s. Stats: {stats}")
         return stats
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get current processing metrics.
+        
+        Returns:
+            Dict[str, Any]: Current processing metrics
+        """
+        return self.metrics.copy()
+    
+    def reset_metrics(self) -> None:
+        """Reset all metrics counters to zero."""
+        self.metrics = {
+            "files_processed": 0,
+            "files_failed": 0,
+            "chunks_created": 0,
+            "chunks_stored": 0,
+            "processing_time": 0
+        }
 
 # ------------ File Watcher Class ------------
 
 class TextFileHandler(FileSystemEventHandler):
-    def __init__(self, document_processor, tracker=None):
+    """
+    Watchdog event handler for monitoring file changes.
+    
+    Attributes:
+        processor: DocumentProcessor instance to process files
+        tracker: Optional ProcessingTracker to track processed files
+        stats: Statistics about processing events
+    """
+    
+    def __init__(
+        self, 
+        document_processor: DocumentProcessor, 
+        tracker: Optional[ProcessingTracker] = None
+    ):
         """
         Initialize a file system event handler for Markdown files.
         
@@ -790,86 +1405,173 @@ class TextFileHandler(FileSystemEventHandler):
         logger.info(f"TextFileHandler initialized with {'tracking enabled' if tracker else 'no tracking'}")
 
     def on_created(self, event):
-        """Handle file creation events."""
-        if event.is_directory or not event.src_path.endswith('.md'):
+        """
+        Handle file creation events.
+        
+        Args:
+            event: The file system event
+        """
+        # Check if this is a file we should process
+        if event.is_directory:
+            return
+            
+        file_path = event.src_path
+        _, file_ext = os.path.splitext(file_path)
+        
+        if file_ext not in config.FILE_EXTENSIONS:
             return
         
         event_time = time.time()
-        file_size = os.path.getsize(event.src_path) if os.path.exists(event.src_path) else "unknown"
-        logger.info(f"New text file detected: {event.src_path} (size: {file_size} bytes)")
-        
-        # Process the new file
-        self.stats["created"] += 1
-        success = self.processor.process_file(event.src_path)
-        
-        # Update tracker if processing was successful
-        if success:
-            self.stats["processed"] += 1
-            if self.tracker:
-                self.tracker.mark_as_processed(event.src_path)
-        else:
-            self.stats["failed"] += 1
+        try:
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else "unknown"
+            logger.info(f"New file detected: {file_path} (size: {file_size} bytes)")
             
-        process_time = time.time() - event_time
-        logger.info(f"Creation event processed in {process_time:.2f}s (success: {success})")
+            # Process the new file
+            self.stats["created"] += 1
+            
+            # Use the event loop to run the async process_file method
+            # Instead of asyncio.run which can't be nested
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                result = loop.run_until_complete(self.processor.process_file(file_path))
+            else:
+                # Create a Future to get the result
+                future = asyncio.run_coroutine_threadsafe(
+                    self.processor.process_file(file_path), 
+                    loop
+                )
+                result = future.result()
+            
+            # Update tracker if processing was successful
+            if result["success"]:
+                self.stats["processed"] += 1
+                if self.tracker:
+                    self.tracker.mark_as_processed(file_path)
+            else:
+                self.stats["failed"] += 1
+                
+            process_time = time.time() - event_time
+            logger.info(f"Creation event processed in {process_time:.2f}s (success: {result['success']})")
+        except Exception as e:
+            self.stats["failed"] += 1
+            logger.error(f"Error handling file creation event: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # Log overall statistics periodically
         self._log_stats()
 
     def on_modified(self, event):
-        """Handle file modification events."""
-        if event.is_directory or not event.src_path.endswith('.md'):
+        """
+        Handle file modification events.
+        
+        Args:
+            event: The file system event
+        """
+        # Check if this is a file we should process
+        if event.is_directory:
+            return
+            
+        file_path = event.src_path
+        _, file_ext = os.path.splitext(file_path)
+        
+        if file_ext not in config.FILE_EXTENSIONS:
             return
         
         event_time = time.time()
-        file_size = os.path.getsize(event.src_path) if os.path.exists(event.src_path) else "unknown"
-        logger.info(f"Text file modified: {event.src_path} (size: {file_size} bytes)")
-        
-        # Process the modified file
-        self.stats["modified"] += 1
-        success = self.processor.process_file(event.src_path)
-        
-        # Update tracker if processing was successful
-        if success:
-            self.stats["processed"] += 1
-            if self.tracker:
-                self.tracker.mark_as_processed(event.src_path)
-        else:
-            self.stats["failed"] += 1
+        try:
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else "unknown"
+            logger.info(f"File modified: {file_path} (size: {file_size} bytes)")
             
-        process_time = time.time() - event_time
-        logger.info(f"Modification event processed in {process_time:.2f}s (success: {success})")
+            # Process the modified file
+            self.stats["modified"] += 1
+            
+            # Use the event loop to run the async process_file method
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                result = loop.run_until_complete(self.processor.process_file(file_path))
+            else:
+                # Create a Future to get the result
+                future = asyncio.run_coroutine_threadsafe(
+                    self.processor.process_file(file_path), 
+                    loop
+                )
+                result = future.result()
+            
+            # Update tracker if processing was successful
+            if result["success"]:
+                self.stats["processed"] += 1
+                if self.tracker:
+                    self.tracker.mark_as_processed(file_path)
+            else:
+                self.stats["failed"] += 1
+                
+            process_time = time.time() - event_time
+            logger.info(f"Modification event processed in {process_time:.2f}s (success: {result['success']})")
+        except Exception as e:
+            self.stats["failed"] += 1
+            logger.error(f"Error handling file modification event: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # Log overall statistics periodically
         self._log_stats()
 
     def on_deleted(self, event):
-        """Handle file deletion events."""
-        if event.is_directory or not event.src_path.endswith('.md'):
+        """
+        Handle file deletion events.
+        
+        Args:
+            event: The file system event
+        """
+        # Check if this is a file we should process
+        if event.is_directory:
+            return
+            
+        file_path = event.src_path
+        _, file_ext = os.path.splitext(file_path)
+        
+        if file_ext not in config.FILE_EXTENSIONS:
             return
         
         event_time = time.time()
-        logger.info(f"Text file deleted: {event.src_path}")
-        
-        # Get the filename without the path
-        filename = os.path.basename(event.src_path)
-        
-        # Delete the chunks from storage
-        self.stats["deleted"] += 1
-        self.processor.storage.delete_chunks(filename)
-        
-        # Update tracker if available
-        tracker_updated = False
-        if self.tracker:
-            tracker_updated = self.tracker.remove_file(filename)
+        try:
+            logger.info(f"File deleted: {file_path}")
             
-        process_time = time.time() - event_time
-        logger.info(f"Deletion event processed in {process_time:.2f}s (tracker updated: {tracker_updated})")
+            # Get the filename without the path
+            filename = os.path.basename(file_path)
+            
+            # Delete the chunks from storage
+            self.stats["deleted"] += 1
+            
+            # Use the event loop to run the async delete_chunks method
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                loop.run_until_complete(self.processor.storage.delete_chunks(filename))
+            else:
+                # Create a Future for the deletion
+                future = asyncio.run_coroutine_threadsafe(
+                    self.processor.storage.delete_chunks(filename), 
+                    loop
+                )
+                future.result()
+            
+            # Update tracker if available
+            tracker_updated = False
+            if self.tracker:
+                tracker_updated = self.tracker.remove_file(filename)
+                
+            process_time = time.time() - event_time
+            logger.info(f"Deletion event processed in {process_time:.2f}s (tracker updated: {tracker_updated})")
+        except Exception as e:
+            logger.error(f"Error handling file deletion event: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # Log overall statistics periodically
         self._log_stats()
     
-    def process_existing_files(self, data_folder):
+    async def process_existing_files(self, data_folder: str) -> ProcessingStats:
         """
         Process existing text files in the specified folder.
         
@@ -877,10 +1579,10 @@ class TextFileHandler(FileSystemEventHandler):
             data_folder: Path to the folder containing text files
             
         Returns:
-            dict: Processing statistics
+            ProcessingStats: Processing statistics
         """
         logger.info(f"Processing existing files in {data_folder}")
-        return self.processor.process_directory(data_folder, self.tracker)
+        return await self.processor.process_directory(data_folder, self.tracker)
     
     def _log_stats(self):
         """Log current statistics about file processing."""
@@ -894,7 +1596,11 @@ class TextFileHandler(FileSystemEventHandler):
             logger.info(f"Events processed: created={self.stats['created']}, modified={self.stats['modified']}, " +
                     f"deleted={self.stats['deleted']}, successful={self.stats['processed']}, failed={self.stats['failed']}")
 
-    def start_watching(self, data_folder, process_existing=True):
+    def start_watching(
+        self, 
+        data_folder: str, 
+        process_existing: bool = True
+    ) -> Observer:
         """
         Start watching a folder for file changes.
         
@@ -908,11 +1614,46 @@ class TextFileHandler(FileSystemEventHandler):
         watch_start = time.time()
         logger.info(f"Starting to watch folder: {data_folder} (process existing: {process_existing})")
         
-        # Process existing files if requested
+        # Process existing files if requested - but do it synchronously to avoid
+        # event loop complications
         if process_existing:
-            stats = self.process_existing_files(data_folder)
-            logger.info(f"Processed existing files summary: total={stats['total']}, " +
-                    f"processed={stats['processed']}, skipped={stats['skipped']}, failed={stats['failed']}")
+            # Find Markdown files in the directory
+            files = []
+            for ext in config.FILE_EXTENSIONS:
+                files.extend(glob.glob(os.path.join(data_folder, f"*{ext}")))
+            
+            processed = 0
+            skipped = 0
+            failed = 0
+            
+            logger.info(f"Found {len(files)} existing files to process")
+            
+            # Process each file one by one synchronously
+            for file_path in files:
+                if self.tracker and not self.tracker.should_process_file(file_path):
+                    logger.info(f"Skipping already processed file: {file_path}")
+                    skipped += 1
+                    continue
+                
+                try:
+                    # Use a separate event loop for each file to avoid nesting issues
+                    loop = asyncio.new_event_loop()
+                    result = loop.run_until_complete(self.processor.process_file(file_path))
+                    loop.close()
+                    
+                    if result["success"]:
+                        processed += 1
+                        if self.tracker:
+                            self.tracker.mark_as_processed(file_path)
+                    else:
+                        failed += 1
+                        logger.error(f"Failed to process {file_path}: {result['message']}")
+                except Exception as e:
+                    failed += 1
+                    logger.error(f"Error processing file {file_path}: {str(e)}")
+                    
+            logger.info(f"Processed existing files summary: total={len(files)}, " +
+                    f"processed={processed}, skipped={skipped}, failed={failed}")
         
         # Set up watchdog for future changes
         observer_start = time.time()
@@ -941,38 +1682,71 @@ class TextFileHandler(FileSystemEventHandler):
         logger.info("Started periodic statistics logging")
 
 # ------------ Main Function ------------
-
 def main():
+    """
+    Main function to run the document processor.
+    """
     # Connect to Weaviate
-    weaviate_url = os.getenv("WEAVIATE_URL", "http://localhost:8080")
-    data_folder = os.getenv("DATA_FOLDER", "/data")
+    weaviate_url = config.WEAVIATE_URL
+    data_folder = config.DATA_FOLDER
     
     try:
+        # Set up a single event loop for the entire application
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Connect to Weaviate
         logger.info(f"Connecting to Weaviate at {weaviate_url}")
-        client = connect_with_retry(weaviate_url)
+        client = loop.run_until_complete(connect_with_retry(weaviate_url))
         logger.info("Successfully connected to Weaviate")
         
         # Create storage, processor, and file handler instances
         storage = DocumentStorage(client)
-        storage.setup_schema()
+        loop.run_until_complete(storage.setup_schema())
         
         tracker = ProcessingTracker(os.path.join(data_folder, ".processed_files.json"))
-        processor = DocumentProcessor(storage)
+        processor = DocumentProcessor(
+            storage,
+            chunk_size=config.CHUNK_SIZE,
+            chunk_overlap=config.CHUNK_OVERLAP,
+            chunking_strategy=config.CHUNKING_STRATEGY
+        )
         
         handler = TextFileHandler(processor, tracker)
         observer = handler.start_watching(data_folder, process_existing=True)
         
-        # Keep the main thread running
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("Stopping the file watcher")
-            observer.stop()
-        observer.join()
+        # Log initial document count
+        doc_count = loop.run_until_complete(storage.get_document_count())
+        logger.info(f"Current document count in database: {doc_count}")
         
+        # Keep the main thread running with signal handling
+        try:
+            import signal
+            
+            def signal_handler(sig, frame):
+                logger.info("Stopping the file watcher (signal received)")
+                observer.stop()
+                raise KeyboardInterrupt
+            
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+            
+            while observer.is_alive():
+                observer.join(1)
+                
+        except KeyboardInterrupt:
+            logger.info("Process interrupted by user")
+            observer.stop()
+        finally:
+            observer.join()
+            # Close the client connection
+            client.close()
+            # Close the event loop
+            loop.close()
+            logger.info("Processor shutdown complete")
+            
     except Exception as e:
-        logger.error(f"Error initializing the processor: {str(e)}")
+        logger.error(f"Error in main function: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
 
