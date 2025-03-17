@@ -169,6 +169,33 @@ See `docs/workflows/document-processing.md` for detailed sequence diagram.
 
 See `docs/workflows/query-processing.md` for detailed sequence diagram.
 
+## Converting Documents to Markdown
+
+When converting PDFs or other documents to text files for processing:
+
+1. Use Markdown formatting to preserve document structure:
+   ```markdown
+   # Document Title
+   ## Section 1
+   This is the content of section 1...
+   ### Subsection 1.1
+   More detailed content...
+   ## Section 2
+   ```
+
+2. Content from the second main section...
+   Add page numbers using HTML comments:
+   ```markdown
+   <!-- page: 1 -->
+   # Introduction
+   Content from page 1...
+   <!-- page: 2 -->
+   ## Background
+   Content from page 2...
+   ```
+3. Save the file with a .md extension in the data/ directory
+
+4. Create corresponding metadata files as needed
 
 ## Security Features
 

@@ -4,7 +4,7 @@ This guide explains how to use the EU-Compliant Document Chat system to interact
 
 ## Introduction
 
-The Document Chat system allows you to ask questions about text documents in natural language. The system will search through your documents and provide relevant answers with source citations.
+The Document Chat system allows you to ask questions about Markdown documents in natural language. The system will search through your documents and provide relevant answers with source citations.
 
 ## Accessing the System
 
