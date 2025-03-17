@@ -440,7 +440,8 @@ class ChatLogger:
     # Async compatibility methods for projects that want to use async
     async def alog_interaction(self, *args, **kwargs) -> bool:
         """Async-compatible wrapper for log_interaction."""
-        return self.log_interaction(*args, **kwargs)
+        result = self.log_interaction(*args, **kwargs)
+        return result  # Return the bool directly, don't make it a coroutine
 
     async def adelete_user_data(self, *args, **kwargs) -> bool:
         """Async-compatible wrapper for delete_user_data."""

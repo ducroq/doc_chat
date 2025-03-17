@@ -1036,7 +1036,8 @@ async def log_chat_interaction(
     """
     if chat_logger and chat_logger.enabled:
         try:
-            await chat_logger.log_interaction(
+            # Don't use await here since log_interaction is not async
+            chat_logger.log_interaction(
                 query=query,
                 response=response,
                 request_id=request_id,
