@@ -580,6 +580,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown logic
     logger.info("Shutting down application...")
+
+    # Flush any pending logs
+    if chat_logger and chat_logger.enabled and hasattr(chat_logger, "_flush_buffer"):
+        chat_logger._flush_buffer()    
     
     # Properly close the chat logger
     if chat_logger:
