@@ -23,7 +23,7 @@ load_dotenv()
 # ------------ Utility Functions ------------
 def chunk_text(text, max_chunk_size=1000, overlap=200):
     """
-    Split text into overlapping chunks, respecting Markdown structure.
+    Split text into overlapping chunks, respecting Markdown structure and sentence boundaries.
     
     This function processes Markdown documents using the following conventions:
     
@@ -43,7 +43,7 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
     - Keeping heading context with content
     - Respecting page boundaries
     - Maintaining heading hierarchy levels
-    - Preserving paragraph boundaries when possible
+    - Preserving paragraph and sentence boundaries when possible
     
     Args:
         text (str): The Markdown text to chunk
@@ -57,6 +57,15 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
             - heading: The heading text for the section
             - level: The heading level (1 for #, 2 for ##, etc.)
     """
+    # Helper function for language-agnostic sentence splitting
+    def split_into_sentences(text):
+        # This pattern works for many European languages
+        # It looks for periods, question marks, or exclamation points
+        # followed by spaces and capital letters
+        pattern = r'(?<=[.!?])\s+(?=[A-Z])'
+        sentences = re.split(pattern, text)
+        return sentences
+    
     # Extract page markers
     page_pattern = re.compile(r'<!--\s*page:\s*(\d+)\s*-->')
     page_matches = list(page_pattern.finditer(text))
@@ -132,7 +141,7 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
                 "level": current_level
             })
     
-    # Now chunk each section with context preservation
+    # Now chunk each section with sentence boundary detection
     chunks = []
     for section in sections:
         section_text = section["text"]
@@ -160,28 +169,52 @@ def chunk_text(text, max_chunk_size=1000, overlap=200):
             })
             continue
         
-        # For larger sections, split by paragraphs
+        # Split content into paragraphs
         paragraphs = content.split('\n\n')
         current_chunk = ""
+        current_sentences = []
         
         for paragraph in paragraphs:
-            # If adding this paragraph would exceed max size and we already have content
-            if len(current_chunk) + len(paragraph) > max_chunk_size and current_chunk:
-                chunks.append({
-                    "content": current_chunk.strip(),
-                    "page": section_page,
-                    "heading": section_heading,
-                    "level": section_level
-                })
-                
-                # For overlap, include the last bit of the previous chunk
-                overlap_text = current_chunk[-overlap:] if len(current_chunk) > overlap else current_chunk
-                current_chunk = overlap_text + "\n\n" + paragraph
-            else:
-                if current_chunk:
-                    current_chunk += "\n\n" + paragraph
+            # Split paragraph into sentences using our language-agnostic approach
+            sentences = split_into_sentences(paragraph)
+            
+            # Process each sentence
+            for sentence in sentences:
+                # If adding this sentence would exceed max size and we already have content
+                if len(current_chunk) + len(sentence) + 2 > max_chunk_size and current_chunk:  # +2 for the newline
+                    chunks.append({
+                        "content": current_chunk.strip(),
+                        "page": section_page,
+                        "heading": section_heading,
+                        "level": section_level
+                    })
+                    
+                    # For overlap, include sentences from the previous chunk
+                    overlap_text = ""
+                    overlap_size = 0
+                    
+                    # Work backwards through sentences to create overlap
+                    for prev_sentence in reversed(current_sentences):
+                        if overlap_size + len(prev_sentence) + 1 <= overlap:  # +1 for space
+                            overlap_text = prev_sentence + " " + overlap_text
+                            overlap_size += len(prev_sentence) + 1
+                        else:
+                            break
+                    
+                    # Start a new chunk with the overlap plus current sentence
+                    current_chunk = overlap_text + sentence
+                    current_sentences = [sentence]
                 else:
-                    current_chunk = paragraph
+                    if current_chunk:
+                        current_chunk += " " + sentence
+                    else:
+                        current_chunk = sentence
+                    current_sentences.append(sentence)
+            
+            # Add paragraph separator if this isn't the last paragraph
+            if current_chunk and paragraph != paragraphs[-1]:
+                current_chunk += "\n\n"
+                current_sentences.append("\n\n")
         
         # Add the last chunk from this section
         if current_chunk:
