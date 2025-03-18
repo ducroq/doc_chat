@@ -3,6 +3,11 @@ import httpx
 import json
 import os
 import bcrypt
+from typing import Dict, List, Any, Optional
+
+# Configuration
+API_URL = os.getenv("API_URL", "http://api:8000")
+ENABLE_CHAT_LOGGING = os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true"
 
 # Authentication functionality
 def check_password(username, password):
@@ -13,8 +18,58 @@ def check_password(username, password):
     return False
 
 def get_api_key():
-    with open(os.environ.get("INTERNAL_API_KEY_FILE"), "r") as f:
-        return f.read().strip()
+    try:
+        with open(os.environ.get("INTERNAL_API_KEY_FILE"), "r") as f:
+            return f.read().strip()
+    except Exception as e:
+        st.error(f"Error reading API key: {str(e)}")
+        return ""
+
+def format_citation(source):
+    """Format a source citation with metadata if available."""
+    filename = source.get('filename', 'Unknown')
+    chunk_id = source.get('chunkId', 'Unknown')
+    
+    if 'metadata' in source:
+        metadata = source.get('metadata', {})
+        
+        # Build a rich citation with context
+        if metadata and 'title' in metadata:
+            citation = f"• {metadata['title']}"
+            
+            if metadata and 'itemType' in metadata:
+                citation += f" [{metadata['itemType']}]"
+                
+            # Handle creators/authors
+            if metadata and 'creators' in metadata and metadata['creators']:
+                authors = []
+                for creator in metadata['creators']:
+                    if creator.get('creatorType') == 'author':
+                        name = f"{creator.get('lastName', '')}, {creator.get('firstName', '')}"
+                        authors.append(name.strip(', '))
+                if authors:
+                    citation += f" by {', '.join(authors[:2])}"
+                    if len(authors) > 2:
+                        citation += f" et al."
+                        
+            # Add date if available
+            if metadata and 'date' in metadata:
+                citation += f" ({metadata['date']})"
+        else:
+            citation = f"• {filename} (Chunk {chunk_id})"
+            
+        # Add section info if available
+        if 'heading' in source:
+            citation += f" - Section: {source['heading']}"
+            
+        # Add page number if available
+        if 'page' in source:
+            citation += f", Page {source['page']}"
+            
+        return citation
+    else:
+        # Basic citation without metadata
+        return f"• {filename} (Chunk {chunk_id})"
 
 def login_page():
     st.title("🇪🇺 Document Chat Login")
@@ -33,7 +88,7 @@ def login_page():
             else:
                 st.error("Invalid username or password")
 
-# Main app functionality (your existing code)
+# Main app functionality
 def main_app():
     # API URL
     API_URL = os.getenv("API_URL", "http://api:8000")
@@ -52,7 +107,7 @@ def main_app():
             if "sources" in message and message["sources"]:
                 st.caption("Sources:")
                 for source in message["sources"]:
-                    st.caption(f"• {source['filename']} (Chunk {source['chunkId']})")
+                    st.caption(format_citation(source))
 
     # Chat input
     if prompt := st.chat_input("Ask a question about your documents..."):
@@ -86,43 +141,7 @@ def main_app():
                         if sources:
                             st.caption("Sources:")
                             for source in sources:
-                                filename = source['filename']
-                                chunk_id = source['chunkId']
-
-                                if 'metadata' in source:
-                                    metadata = source.get('metadata', {})
-
-                                    # Build a rich citation with context
-                                    if metadata and 'title' in metadata:
-                                        citation = f"• {metadata['title']}"
-                                    if metadata and 'itemType' in metadata:
-                                        citation += f" [{metadata['itemType']}]"
-                                    # Handle creators/authors
-                                    if metadata and 'creators' in metadata and metadata['creators']:
-                                        authors = []
-                                        for creator in metadata['creators']:
-                                            if creator.get('creatorType') == 'author':
-                                                name = f"{creator.get('lastName', '')}, {creator.get('firstName', '')}"
-                                                authors.append(name.strip(', '))
-                                        if authors:
-                                            citation += f" by {', '.join(authors[:2])}"
-                                            if len(authors) > 2:
-                                                citation += f" et al."
-                                    # Add date if available
-                                    if metadata and 'date' in metadata:
-                                        citation += f" ({metadata['date']})"
-                                else:
-                                    citation = f"• {filename} (Chunk {chunk_id})"
-                                    
-                                # Add section info if available
-                                if 'heading' in source:
-                                    citation += f" - Section: {source['heading']}"
-                                    
-                                # Add page number if available
-                                if 'page' in source:
-                                    citation += f", Page {source['page']}"
-
-                                st.caption(citation)
+                                st.caption(format_citation(source))
 
                         # Add assistant message to chat history
                         st.session_state.messages.append({
@@ -184,7 +203,7 @@ def main_app():
                 st.components.v1.html(js, height=0)
 
         # Display logging status if enabled
-        if os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true":
+        if ENABLE_CHAT_LOGGING:
             st.warning("⚠️ Chat logging is currently enabled for research purposes.")        
 
         # User info
@@ -197,11 +216,13 @@ def main_app():
                     key="logout_button")        
         with user_col2:
             # Clear conversation option
-            if st.button("🧹 Clear Conversation", key="clear_conversation"):
+            if st.button("🧹 Clear", key="clear_conversation"):
                 st.session_state.messages = []
                 st.rerun()                    
         
         # System Status
+        st.subheader("System Status", divider="gray")
+        
         # Check API connection
         try:
             status_response = httpx.get(f"{API_URL}/status")
