@@ -39,6 +39,35 @@ class LogEntry(BaseModel):
         except ValueError:
             raise ValueError("Timestamp must be in ISO format")
 
+class FeedbackEntry(BaseModel):
+    """Data model for feedback log entries with validation."""
+    timestamp: str
+    request_id: str
+    original_request_id: str
+    message_id: str
+    user_id: Optional[str] = None
+    rating: str
+    feedback_text: Optional[str] = None
+    categories: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @field_validator('rating')
+    @classmethod
+    def rating_must_be_valid(cls, v: str) -> str:
+        """Validate that rating is positive or negative."""
+        if v not in ["positive", "negative"]:
+            raise ValueError('Rating must be "positive" or "negative"')
+        return v
+
+    @field_validator('timestamp')
+    @classmethod
+    def timestamp_must_be_iso_format(cls, v: str) -> str:
+        """Validate timestamp is in ISO format."""
+        try:
+            datetime.fromisoformat(v)
+            return v
+        except ValueError:
+            raise ValueError("Timestamp must be in ISO format")
 
 class ChatLogger:
     """
@@ -155,6 +184,102 @@ class ChatLogger:
         except ValueError as e:
             logger.error(f"Error creating log entry: {str(e)}")
             return False
+        
+    def log_feedback(
+        self, 
+        feedback: Dict[str, Any],
+        request_id: Optional[str] = None, 
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Log feedback on a chat interaction with privacy controls.
+        
+        Args:
+            feedback: The feedback data
+            request_id: Unique ID for this feedback submission
+            user_id: Optional user identifier (will be anonymized if anonymization is enabled)
+            metadata: Optional additional metadata about the feedback
+            
+        Returns:
+            bool: Whether logging was successful
+            
+        Raises:
+            ValueError: If any of the required parameters are invalid
+        """
+        if not self.enabled:
+            return False
+        
+        # Input validation
+        if not feedback:
+            logger.warning("Attempted to log empty feedback")
+            return False
+            
+        if not isinstance(feedback, dict):
+            logger.warning(f"Invalid feedback format: {type(feedback)}")
+            return False
+        
+        # Apply anonymization if enabled
+        anonymized_user_id = None
+        if self.anonymize and user_id:
+            try:
+                # Create a deterministic but anonymized ID
+                anon_id = str(uuid.uuid5(uuid.NAMESPACE_OID, user_id))
+                anonymized_user_id = f"{self.ANONYMIZE_PREFIX}{anon_id[-12:]}"
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Error anonymizing user ID: {str(e)}")
+        
+        # Create feedback entry
+        try:
+            # Extract data from feedback dict
+            original_request_id = feedback.get("request_id", "unknown")
+            message_id = feedback.get("message_id", "unknown")
+            rating = feedback.get("rating", "unknown")
+            feedback_text = feedback.get("feedback_text")
+            categories = feedback.get("categories", [])
+            
+            # Create the feedback entry
+            feedback_entry = FeedbackEntry(
+                timestamp=datetime.now().isoformat(),
+                request_id=request_id or str(uuid.uuid4()),
+                original_request_id=original_request_id,
+                message_id=message_id,
+                user_id=anonymized_user_id if self.anonymize and user_id else user_id,
+                rating=rating,
+                feedback_text=feedback_text,
+                categories=categories,
+                metadata=metadata
+            )
+            
+            # Create filename based on date
+            current_date = datetime.now().strftime('%Y%m%d')
+            feedback_file = self.log_dir / f"feedback_log_{current_date}.jsonl"
+            
+            # Write to feedback-specific log file
+            try:
+                # Ensure log directory exists
+                self.log_dir.mkdir(exist_ok=True, parents=True)
+                
+                # Format as JSON line
+                log_line = json.dumps(feedback_entry.model_dump()) + "\n"
+                
+                # Append to feedback log file
+                with open(feedback_file, 'a', encoding='utf-8') as f:
+                    f.write(log_line)
+                
+                logger.info(f"Feedback logged: {rating} for request {original_request_id}")
+                return True
+                
+            except (IOError, PermissionError) as e:
+                logger.error(f"Error writing to feedback log file: {str(e)}")
+                return False
+            
+        except ValueError as e:
+            logger.error(f"Error creating feedback entry: {str(e)}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error logging feedback: {str(e)}")
+            return False        
 
     def _anonymize_sources(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -454,3 +579,7 @@ class ChatLogger:
     async def aclose(self) -> None:
         """Async-compatible wrapper for close."""
         self.close()
+
+    async def alog_feedback(self, *args, **kwargs) -> bool:
+        """Async-compatible wrapper for log_feedback."""
+        return self.log_feedback(*args, **kwargs)        

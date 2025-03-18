@@ -221,8 +221,45 @@ class Source(BaseModel):
     page: Optional[int] = None
     heading: Optional[str] = None
     metadata: Optional[DocumentMetadata] = None
+
+class FeedbackModel(BaseModel):
+    """
+    Model for user feedback on responses.
     
+    Attributes:
+        request_id: ID of the original request
+        message_id: ID of the specific message receiving feedback
+        rating: Feedback rating (positive/negative)
+        feedback_text: Optional detailed feedback
+        categories: Optional categories of issues
+        timestamp: When the feedback was submitted
+    """
+    request_id: str
+    message_id: str
+    rating: str = Field(..., description="positive or negative")
+    feedback_text: Optional[str] = None
+    categories: Optional[List[str]] = None
+    timestamp: str
     
+    @field_validator('rating')
+    @classmethod
+    def validate_rating(cls, v: str) -> str:
+        """Validate rating is positive or negative."""
+        if v not in ["positive", "negative"]:
+            raise ValueError('Rating must be "positive" or "negative"')
+        return v
+    
+    @field_validator('timestamp')
+    @classmethod
+    def validate_timestamp(cls, v: str) -> str:
+        """Validate timestamp is in ISO format."""
+        try:
+            datetime.fromisoformat(v)
+            return v
+        except ValueError:
+            raise ValueError("Timestamp must be in ISO format")
+
+
 # Error classes
 class MistralAPIError(Exception):
     """
@@ -429,6 +466,44 @@ def set_cached_response(query_hash: str, model: str, response: Dict[str, Any]) -
         if oldest_key:
             del response_cache[oldest_key]
             logger.info(f"Removed oldest cache entry: {oldest_key[:10]}...")
+
+async def log_feedback(
+    feedback: Dict[str, Any],
+    request_id: str,
+    user_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Background task to log feedback.
+    
+    Args:
+        feedback: The feedback data
+        request_id: Request identifier for this feedback submission
+        user_id: Optional user identifier
+        metadata: Optional additional metadata
+    """
+    if chat_logger and chat_logger.enabled:
+        try:
+            # Use log_feedback method if it exists
+            if hasattr(chat_logger, "log_feedback"):
+                chat_logger.log_feedback(
+                    feedback=feedback,
+                    request_id=request_id,
+                    user_id=user_id,
+                    metadata=metadata
+                )
+            else:
+                # Fall back to generic interaction logging
+                logger.info(f"[{request_id}] Using generic logging for feedback")
+                chat_logger.log_interaction(
+                    query=f"FEEDBACK: {feedback.get('rating', 'unknown')}",
+                    response={"feedback": feedback},
+                    request_id=request_id,
+                    user_id=user_id,
+                    metadata=metadata
+                )
+        except Exception as e:
+            logger.error(f"Error logging feedback: {str(e)}")            
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def call_mistral_with_retry(
@@ -1085,6 +1160,65 @@ async def privacy_notice():
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
+    
+@app.post("/feedback")
+async def submit_feedback(
+    feedback: FeedbackModel,
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(get_api_key),
+    user_id: Optional[str] = Header(None)
+):
+    """
+    Submit feedback on a previous response.
+    
+    Args:
+        feedback: Feedback data
+        background_tasks: FastAPI background tasks
+        api_key: API key for authentication
+        user_id: Optional user identifier
+        
+    Returns:
+        dict: Acknowledgment
+    """
+    request_id = str(uuid.uuid4())[:8]  # Generate an ID for this feedback submission
+    
+    logger.info(f"[{request_id}] Received feedback for request {feedback.request_id}")
+    
+    # Process and store feedback
+    if chat_logger and chat_logger.enabled:
+        try:
+            metadata = {
+                "timestamp": datetime.now().isoformat(),
+                "request_id": request_id,
+                "original_request_id": feedback.request_id,
+                "message_id": feedback.message_id
+            }
+            
+            # Log feedback asynchronously
+            background_tasks.add_task(
+                log_feedback,
+                feedback=feedback.model_dump(),
+                request_id=request_id,
+                user_id=user_id,
+                metadata=metadata
+            )
+            
+            return {
+                "status": "success",
+                "message": "Feedback received"
+            }
+        except Exception as e:
+            logger.error(f"[{request_id}] Error storing feedback: {str(e)}")
+            return {
+                "status": "error",
+                "message": "Failed to store feedback"
+            }
+    else:
+        logger.warning(f"[{request_id}] Feedback received but logging is disabled")
+        return {
+            "status": "success",
+            "message": "Feedback received but logging is disabled"
+        }
     
 # 1. First registered (executed last): Add security headers
 @app.middleware("http")

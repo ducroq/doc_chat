@@ -3,7 +3,10 @@ import httpx
 import json
 import os
 import bcrypt
+import uuid
+from datetime import datetime
 from typing import Dict, List, Any, Optional
+import uuid
 
 # Configuration
 API_URL = os.getenv("API_URL", "http://api:8000")
@@ -70,6 +73,35 @@ def format_citation(source):
     else:
         # Basic citation without metadata
         return f"• {filename} (Chunk {chunk_id})"
+    
+def log_feedback(feedback_type, message_content, feedback_text=None):
+    """Log feedback to API (simplified version)"""
+    try:
+        # Create a simple feedback object
+        feedback_data = {
+            "request_id": str(uuid.uuid4())[:8],
+            "message_id": str(uuid.uuid4()),
+            "rating": feedback_type,  # "positive" or "negative" 
+            "feedback_text": feedback_text,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Log to API if endpoint is ready
+        try:
+            response = httpx.post(
+                f"{API_URL}/feedback",
+                json=feedback_data,
+                headers={"X-API-Key": get_api_key()},
+                timeout=10.0
+            )
+            return True
+        except Exception as e:
+            # Just log locally if API endpoint isn't ready
+            st.session_state.setdefault("feedback_history", []).append(feedback_data)
+            return True
+    except Exception as e:
+        st.error(f"Error logging feedback: {str(e)}")
+        return False    
 
 def login_page():
     st.title("🇪🇺 Document Chat Login")
@@ -108,8 +140,8 @@ def main_app():
                 st.caption("Sources:")
                 for source in message["sources"]:
                     st.caption(format_citation(source))
-
-    # Chat input
+ 
+     # Chat input
     if prompt := st.chat_input("Ask a question about your documents..."):
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -143,6 +175,45 @@ def main_app():
                             for source in sources:
                                 st.caption(format_citation(source))
 
+                        # Add feedback UI with expander
+                        with st.expander("Rate this response"):
+                            st.write("Was this response helpful?")
+                            col1, col2 = st.columns(2)
+                            
+                            # Simple feedback without complex state management
+                            with col1:
+                                if st.button("👍 Helpful", key=f"helpful_{str(uuid.uuid4())[:8]}"):
+                                    log_feedback("positive", answer)
+                                    st.success("Thank you for your feedback!")
+                                    
+                            with col2:
+                                if st.button("👎 Not Helpful", key=f"not_helpful_{str(uuid.uuid4())[:8]}"):
+                                    # Set session state to show the detailed feedback form
+                                    st.session_state["show_detail_feedback"] = True
+                                    st.session_state["feedback_response"] = answer
+                                    st.rerun()
+                            
+                            # Show detailed feedback form if negative feedback was given
+                            if st.session_state.get("show_detail_feedback", False) and st.session_state.get("feedback_response") == answer:
+                                with st.form(key=f"feedback_form_{str(uuid.uuid4())[:8]}"):
+                                    st.write("Please tell us how we can improve:")
+                                    feedback_text = st.text_area("What was wrong with this response?")
+                                    feedback_categories = st.multiselect(
+                                        "Select issues with the response:",
+                                        ["Missing information", "Incorrect information", 
+                                        "Didn't understand my question", "Irrelevant sources",
+                                        "Other"]
+                                    )
+                                    
+                                    submit_button = st.form_submit_button("Submit Feedback")
+                                    if submit_button:
+                                        # Log the detailed feedback
+                                        log_feedback("negative", answer, feedback_text)
+                                        st.success("Thank you for your detailed feedback!")
+                                        # Reset the form visibility flag
+                                        st.session_state["show_detail_feedback"] = False
+                                        st.session_state["feedback_response"] = None
+
                         # Add assistant message to chat history
                         st.session_state.messages.append({
                             "role": "assistant", 
@@ -154,7 +225,8 @@ def main_app():
                         st.error(error_msg)
                         st.session_state.messages.append({
                             "role": "assistant", 
-                            "content": error_msg
+                            "content": error_msg,
+                            "id": str(uuid.uuid4())
                         })
                 
                 except Exception as e:
@@ -162,7 +234,8 @@ def main_app():
                     st.error(error_msg)
                     st.session_state.messages.append({
                         "role": "assistant", 
-                        "content": error_msg
+                        "content": error_msg,
+                        "id": str(uuid.uuid4())
                     })
 
     # Enhanced sidebar with custom controls
@@ -186,6 +259,7 @@ def main_app():
             - Responses provided
             - Document references used
             - Anonymized session identifiers
+            - Feedback on response quality (when provided)
             
             **Data Protection:**
             - All identifiers are anonymized
