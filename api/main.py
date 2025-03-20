@@ -1135,7 +1135,9 @@ async def chat(
             system_prompt = """You are a helpful assistant that answers questions based on the provided document context. 
             Reference section headings when appropriate in your responses. 
             When answering follow-up questions, maintain consistency with your previous responses.
-            If information is not in the provided context, say so rather than making up information."""
+            If information is not in the provided context, say so rather than making up information.
+            Start your responses directly by answering the question - do not begin with phrases like 'Based on the provided document context' or 'Based on our previous conversation'.
+            Write in a natural, conversational tone."""
 
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -1151,7 +1153,9 @@ async def chat(
         else:
             system_prompt =  """You are a helpful assistant that answers questions based on the provided document context. 
             Reference section headings when appropriate in your responses. Stick to the information in the context. 
-            If you don't know the answer, say so."""            
+            If you don't know the answer, say so.
+            Start your responses directly by answering the question - do not begin with phrases like 'Based on the provided document context' or 'Based on our previous conversation'.
+            Write in a natural, conversational tone."""            
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"""Context:
