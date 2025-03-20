@@ -431,7 +431,16 @@ curl -X POST http://localhost:8000/chat \
 
 ## Chat Logger Component
 
-The system includes a privacy-focused chat logging component for research:
+The system includes a privacy-focused chat logging component for research. A comprehensive feedback collection mechanism that allows users to rate responses and provide detailed feedback on the quality of answers is under development.
+
+### Overview
+
+The feedback system consists of:
+
+1. **Frontend UI components** in the web interface
+2. **API endpoints** for submitting feedback
+3. **Storage mechanisms** for logging feedback
+4. **Privacy-compliant data handling** that respects GDPR requirements
 
 ### Key Files
 - `api/chat_logger.py`: Core logging implementation
@@ -447,6 +456,8 @@ Logging is controlled via environment variables:
 - `CHAT_LOG_DIR`: Storage location (default: chat_data)
 
 ### Log Format
+
+The feedback system follows the same privacy principles as the main chat logging system.
 
 Logs are stored as JSONL files with daily rotation:
 ```json

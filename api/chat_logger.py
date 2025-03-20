@@ -168,6 +168,34 @@ class ChatLogger:
         
         # Create log entry
         try:
+            # Create minimized sources data for logging
+            minimized_sources = []
+            for source in response.get("sources", []):
+                # Extract only essential source information
+                minimal_source = {
+                    "filename": source.get("filename"),
+                    "chunkId": source.get("chunkId")
+                }
+                
+                # Add section and page if available
+                if "heading" in source:
+                    minimal_source["heading"] = source.get("heading")
+                if "page" in source:
+                    minimal_source["page"] = source.get("page")
+                
+                # Add minimal metadata if needed
+                if "metadata" in source and isinstance(source["metadata"], dict):
+                    minimal_metadata = {}
+                    # Just preserve the document type and title
+                    if "itemType" in source["metadata"]:
+                        minimal_metadata["itemType"] = source["metadata"]["itemType"]
+                    if "title" in source["metadata"]:
+                        minimal_metadata["title"] = source["metadata"]["title"]
+                    if minimal_metadata:
+                        minimal_source["metadata"] = minimal_metadata
+                
+                minimized_sources.append(minimal_source)
+
             log_entry = LogEntry(
                 timestamp=datetime.now().isoformat(),
                 request_id=request_id or str(uuid.uuid4()),
@@ -175,11 +203,10 @@ class ChatLogger:
                 query=query,
                 response={
                     "answer": response.get("answer"),
-                    "sources": self._anonymize_sources(response.get("sources", []))
+                    "sources": minimized_sources
                 },
                 metadata=metadata
-            )
-            
+            )            
             return self._write_log_entry(log_entry.model_dump())  # Using model_dump() instead of dict()
         except ValueError as e:
             logger.error(f"Error creating log entry: {str(e)}")
