@@ -7,6 +7,31 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import uuid
+import time
+
+# Initialize all session state variables as global variables
+
+# Chat and conversation history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "conversation_history" not in st.session_state:
+    st.session_state.conversation_history = []
+
+# Feedback-related state variables
+if "feedback_action" not in st.session_state:
+    st.session_state.feedback_action = None
+if "feedback_answer" not in st.session_state:
+    st.session_state.feedback_answer = None
+if "show_detail_feedback" not in st.session_state:
+    st.session_state.show_detail_feedback = False
+if "feedback_history" not in st.session_state:
+    st.session_state.feedback_history = []
+
+# Authentication state
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
 
 # Configuration
 API_URL = os.getenv("API_URL", "http://api:8000")
@@ -20,10 +45,30 @@ def check_password(username, password):
         return bcrypt.checkpw(password.encode(), stored_hash.encode())
     return False
 
+# Helper function to add a message to conversation history
+def add_to_conversation_history(role: str, content: str, sources: List[Dict] = None):
+    st.session_state.conversation_history.append({
+        "role": role,
+        "content": content,
+        "sources": sources if sources else [],
+        "timestamp": time.time()
+    })
+    
+    # Limit history length if needed (optional)
+    max_history = 10  # Adjust based on your requirements
+    if len(st.session_state.conversation_history) > max_history:
+        st.session_state.conversation_history = st.session_state.conversation_history[-max_history:]
+
+# Function to format conversation history for the API
+def format_conversation_for_api(current_question: str) -> Dict:
+    return {
+        "question": current_question,
+        "conversation_history": st.session_state.conversation_history
+    }
+
 def get_api_key():
     try:
         api_key_file = os.environ.get("INTERNAL_API_KEY_FILE")
-        print(f"Reading API key from: {api_key_file}", flush=True)
         
         if not api_key_file or not os.path.exists(api_key_file):
             print("API key file not found!", flush=True)
@@ -186,22 +231,33 @@ def sidebar():
 
         # Display logging status if enabled
         if ENABLE_CHAT_LOGGING:
-            st.warning("⚠️ Chat logging is currently enabled for research purposes.")        
+            st.warning("⚠️ Chat logging is currently enabled for research purposes.")
+
+        # Add debug expander for conversation history
+        with st.expander("Debug: Conversation History", expanded=False):
+            st.write(f"feedback action:  {st.session_state.feedback_action}") # Debug print
+            if st.session_state.conversation_history:
+                st.write(f"Conversation length: {len(st.session_state.conversation_history)} messages")
+                for i, msg in enumerate(st.session_state.conversation_history):
+                    st.write(f"{i+1}. {msg['role']}: {msg['content'][:50]}...")
+            else:
+                st.write("No conversation history yet.")
 
         # User info
         st.markdown(f"**Logged in as:** {st.session_state.get('username', 'User')}")
-        user_col1, user_col2 = st.columns([2, 1])
-        with user_col1:
-            # log out button
-            st.button("Logout", 
-                    on_click=lambda: st.session_state.update({"authenticated": False}),
-                    key="logout_button")        
-        with user_col2:
-            # Clear conversation option
-            if st.button("🧹 Clear", key="clear_conversation"):
-                st.session_state.messages = []
-                st.rerun()                    
-        
+
+        # log out button
+        st.button("Logout", 
+                on_click=lambda: st.session_state.update({"authenticated": False}),
+                key="logout_button")
+
+        # Single clear button that resets everything
+        if st.button("🔄 New Conversation", key="new_conversation"):
+            st.session_state.conversation_history = []
+            st.session_state.messages = []
+            st.success("Started a new conversation!")
+            st.rerun()                
+
         # System Status
         st.subheader("System Status", divider="gray")
         
@@ -233,21 +289,7 @@ def sidebar():
 def main_app():
     # API URL
     API_URL = os.getenv("API_URL", "http://api:8000")
-
-    # Initialize session state variables
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    # Initialize feedback-related session state variables
-    if "feedback_action" not in st.session_state:
-        st.session_state.feedback_action = None
-    if "feedback_answer" not in st.session_state:
-        st.session_state.feedback_answer = None
-    if "show_detail_feedback" not in st.session_state:
-        st.session_state.show_detail_feedback = False
-    if "feedback_history" not in st.session_state:
-        st.session_state.feedback_history = []
-    
+   
     st.title("🇪🇺 Document Chat")
     st.write("Ask questions about your documents stored in the system.")
 
@@ -302,6 +344,7 @@ def main_app():
     if prompt := st.chat_input("Ask a question about your documents..."):
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
+        add_to_conversation_history("user", prompt)
         
         # Display user message
         with st.chat_message("user"):
@@ -313,7 +356,7 @@ def main_app():
                 try:
                     response = httpx.post(
                         f"{API_URL}/chat",
-                        json={"question": prompt},
+                        json=format_conversation_for_api(prompt),
                         headers={"X-API-Key": get_api_key()},
                         timeout=30.0
                     )
@@ -332,28 +375,28 @@ def main_app():
                             for source in sources:
                                 st.caption(format_citation(source))
 
-                        # # Add feedback UI with expander
-                        # with st.expander("Rate this response"):
-                        #     st.write("Was this response helpful?")
-                        #     # col1, col2 = st.columns(2)
+                        # Add feedback UI with expander
+                        with st.expander("Rate this response"):
+                            st.write("Was this response helpful?")
+                            # col1, col2 = st.columns(2)
                             
-                        #     # Generate unique, STABLE keys for buttons
-                        #     helpful_key = f"helpful_{len(st.session_state.messages)}"
-                        #     not_helpful_key = f"not_helpful_{len(st.session_state.messages)}"
+                            # Generate unique, STABLE keys for buttons
+                            helpful_key = f"helpful_{len(st.session_state.messages)}"
+                            not_helpful_key = f"not_helpful_{len(st.session_state.messages)}"
 
-                        #     left, middle, right = st.columns(3)                            
+                            left, middle, right = st.columns(3)                            
 
-                        #     if left.button("Helpful", icon="👍", key=helpful_key):
-                        #         st.write("Why hello there")
-                        #         print("Positive feedback clicked", flush=True)
-                        #         st.session_state.feedback_action = "positive"
-                        #         st.session_state.feedback_answer = answer
-                        #         st.rerun()  # Force a rerun to process feedback
+                            if left.button("Helpful", icon="👍", key=helpful_key):
+                                st.write("Why hello there")
+                                print("Positive feedback clicked", flush=True)
+                                st.session_state.feedback_action = "positive"
+                                st.session_state.feedback_answer = answer
+                                st.rerun()  # Force a rerun to process feedback
                                     
-                        #     if right.button("Not Helpful", icon="👎", key=not_helpful_key):
-                        #         st.session_state.feedback_action = "negative"
-                        #         st.session_state.feedback_answer = answer
-                        #         st.rerun()  # Force a rerun to process feedback
+                            if right.button("Not Helpful", icon="👎", key=not_helpful_key):
+                                st.session_state.feedback_action = "negative"
+                                st.session_state.feedback_answer = answer
+                                st.rerun()  # Force a rerun to process feedback
 
                         # Add assistant message to chat history
                         st.session_state.messages.append({
@@ -361,6 +404,9 @@ def main_app():
                             "content": answer,
                             "sources": sources
                         })
+
+                        # Add to conversation history
+                        add_to_conversation_history("assistant", answer, sources)                        
                     else:
                         error_msg = f"Error: {response.status_code} - {response.text}"
                         st.error(error_msg)

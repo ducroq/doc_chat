@@ -170,6 +170,15 @@ class Query(BaseModel):
             v += '?'
             
         return v
+    
+class QueryWithHistory(Query):
+    """
+    Extended query model that includes conversation history.
+    
+    Attributes:
+        conversation_history: Optional list of previous interactions
+    """
+    conversation_history: Optional[List[Dict[str, Any]]] = None 
 
 class APIResponse(BaseModel):
     """
@@ -466,6 +475,53 @@ def set_cached_response(query_hash: str, model: str, response: Dict[str, Any]) -
         if oldest_key:
             del response_cache[oldest_key]
             logger.info(f"Removed oldest cache entry: {oldest_key[:10]}...")
+
+def expand_question_references(question: str, history: List[Dict[str, Any]]) -> str:
+    """Enhanced reference resolution for questions"""
+    # Simple cases - return as is
+    if len(question.split()) > 7 or "?" not in question:
+        return question
+        
+    # Reference terms to look for
+    reference_terms = {
+        "pronouns": ["it", "this", "that", "they", "them", "their", "these", "those"],
+        "implicit": ["the", "mentioned", "discussed", "previous", "above", "earlier"]
+    }
+    
+    # Check if question likely contains references
+    has_reference = any(term in question.lower().split() for term in 
+                       reference_terms["pronouns"] + reference_terms["implicit"])
+    
+    if not has_reference:
+        return question
+    
+    # Get key topics from recent conversation
+    topics = []
+    
+    # Extract last 2 exchanges at most
+    recent_turns = min(2, len(history) // 2)
+    recent_history = history[-recent_turns*2:] if recent_history > 0 else history
+    
+    # Simple keyword extraction (could be enhanced with NLP)
+    for msg in recent_history:
+        if msg.get("role") == "user":
+            # Extract nouns from user questions as potential topics
+            words = msg.get("content", "").split()
+            # This is simplified - ideally use POS tagging
+            for word in words:
+                if len(word) > 4 and word.lower() not in ["what", "when", "where", "which", "about"]:
+                    topics.append(word)
+    
+    # Use the most recent significant topic
+    main_topic = topics[0] if topics else ""
+    
+    if main_topic:
+        # Replace common pronouns with the main topic
+        for pronoun in reference_terms["pronouns"]:
+            # Only replace whole words, not parts of words
+            question = re.sub(r'\b' + pronoun + r'\b', main_topic, question, flags=re.IGNORECASE)
+    
+    return question
 
 async def log_feedback(
     feedback: Dict[str, Any],
@@ -907,7 +963,7 @@ async def get_document_statistics():
 # Chat endpoint
 @app.post("/chat", response_model=APIResponse)
 async def chat(
-    query: Query, 
+    query: QueryWithHistory, 
     background_tasks: BackgroundTasks,
     api_key: str = Depends(get_api_key),
     user_id: Optional[str] = Header(None)
@@ -930,6 +986,7 @@ async def chat(
     request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
     
     logger.info(f"[{request_id}] Chat request received: {query.question[:50] + '...' if len(query.question) > 50 else query.question}")
+    logger.info(f"[{request_id}] Conversation history provided: {len(query.conversation_history) if query.conversation_history else 0} messages")
 
     # Check rate limit first
     if not check_rate_limit():
@@ -948,22 +1005,56 @@ async def chat(
         raise HTTPException(status_code=503, detail="Mistral API client not configured")
     
     try:
+        # Process current question with conversation context
+        processed_question = query.question
+        conversation_context = ""
+        
+        # Process conversation history if provided
+        if query.conversation_history and len(query.conversation_history) > 0:
+            # Build conversation context (last 3 interactions)
+            recent_history = query.conversation_history[-3:] if len(query.conversation_history) > 3 else query.conversation_history
+            conversation_context = "Previous conversation:\n"
+            
+            for msg in recent_history:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                conversation_context += f"{role.capitalize()}: {content}\n\n"
+            
+            # Attempt to expand references in the current question
+            processed_question = expand_question_references(query.question, recent_history)
+            logger.info(f"[{request_id}] Processed question: {processed_question}")
+
         # Get the collection
         collection = client.collections.get("DocumentChunk")
         
         # Search Weaviate for relevant chunks using v4 API
+        # Create a hybrid query that includes context from recent conversation
+        hybrid_query = processed_question
+        if query.conversation_history and len(query.conversation_history) > 0:
+            # Get the most recent user question for context
+            recent_user_questions = [msg.get("content", "") 
+                                    for msg in query.conversation_history[-3:] 
+                                    if msg.get("role") == "user"]
+            
+            if recent_user_questions:
+                # Combine current question with recent context
+                # Weight current question higher (0.7) than context (0.3)
+                hybrid_query = f"{processed_question} {' '.join(recent_user_questions)}"
+                logger.info(f"[{request_id}] Using hybrid query for retrieval: {hybrid_query[:100]}...")
+
+        # Use the hybrid query for retrieval
         search_result = collection.query.near_text(
-            query=query.question,
+            query=hybrid_query,
             limit=3,
             return_properties=["content", "filename", "chunkId", "metadataJson"]
         )
-        
+
         # Check if we got any results
         if len(search_result.objects) == 0:
             return APIResponse(
                 answer="I couldn't find any relevant information to answer your question.",
                 sources=[]
-            )
+            )        
         
         # Log search results
         logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")
@@ -1038,11 +1129,36 @@ async def chat(
             
             sources.append(source)
         
-        # Use Mistral client to generate response
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant that answers questions based on the provided document context. Reference section headings when appropriate in your responses. Stick to the information in the context. If you don't know the answer, say so."},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query.question}"}
-        ]
+        # Use Mistral client to generate response, include the conversation context if required
+        if conversation_context:
+            # Improve the system prompt to be more context-aware
+            system_prompt = """You are a helpful assistant that answers questions based on the provided document context. 
+            Reference section headings when appropriate in your responses. 
+            When answering follow-up questions, maintain consistency with your previous responses.
+            If information is not in the provided context, say so rather than making up information."""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"""Context from documents:
+                 {context}
+                 Previous conversation:
+                 {conversation_context}
+                 Current question: {query.question}
+                 When answering, consider both the document context and our conversation history. 
+                 If the current question refers to something we discussed earlier, use that information in your answer."""
+                }            
+            ]
+        else:
+            system_prompt =  """You are a helpful assistant that answers questions based on the provided document context. 
+            Reference section headings when appropriate in your responses. Stick to the information in the context. 
+            If you don't know the answer, say so."""            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"""Context:
+                 {context}
+                 Question: {query.question}"""
+                }
+            ]
         
         chat_response = await call_mistral_with_retry(
             client=mistral_client,
