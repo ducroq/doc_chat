@@ -139,6 +139,10 @@ def log_feedback(feedback_type, message_content, feedback_text=None):
             "feedback_text": feedback_text,
             "timestamp": datetime.now().isoformat()
         }
+
+        # Add feedback text if provided
+        if feedback_text:
+            feedback_data["feedback_text"] = feedback_text        
         
         # Initialize feedback history if it doesn't exist
         if "feedback_history" not in st.session_state:
@@ -233,15 +237,7 @@ def sidebar():
         if ENABLE_CHAT_LOGGING:
             st.warning("⚠️ Chat logging is currently enabled for research purposes.")
 
-        # Add debug expander for conversation history
-        with st.expander("Debug: Conversation History", expanded=False):
-            st.write(f"feedback action:  {st.session_state.feedback_action}") # Debug print
-            if st.session_state.conversation_history:
-                st.write(f"Conversation length: {len(st.session_state.conversation_history)} messages")
-                for i, msg in enumerate(st.session_state.conversation_history):
-                    st.write(f"{i+1}. {msg['role']}: {msg['content'][:50]}...")
-            else:
-                st.write("No conversation history yet.")
+        st.write(f"Debug feedback action: {st.session_state.feedback_action}") # Debug print
 
         # User info
         st.markdown(f"**Logged in as:** {st.session_state.get('username', 'User')}")
@@ -294,21 +290,16 @@ def main_app():
     st.write("Ask questions about your documents stored in the system.")
 
     # Process feedback actions
-    if st.session_state.feedback_action == "positive":
-        # Process positive feedback
-        log_feedback("positive", st.session_state.feedback_answer)
-        st.success("Thank you for your feedback!")
+    if st.session_state.get('feedback_action'):
+        if st.session_state.get('feedback_answer'):
+            with st.spinner("Processing feedback..."):
+                feedback_result = log_feedback(st.session_state.get('feedback_action'), st.session_state.feedback_answer)
+                if feedback_result:
+                    st.success("Thank you for your feedback!")
         
         # Clear the action to prevent multiple submissions
         st.session_state.feedback_action = None
         st.session_state.feedback_answer = None
-        
-    elif st.session_state.feedback_action == "negative":
-        # Show detail form for negative feedback
-        st.session_state.show_detail_feedback = True
-        
-        # Clear the action after setting the detail feedback flag
-        st.session_state.feedback_action = None
 
     # Display detailed feedback form if needed
     if st.session_state.show_detail_feedback and st.session_state.feedback_answer:
@@ -378,25 +369,24 @@ def main_app():
                         # Add feedback UI with expander
                         with st.expander("Rate this response"):
                             st.write("Was this response helpful?")
-                            # col1, col2 = st.columns(2)
                             
                             # Generate unique, STABLE keys for buttons
-                            helpful_key = f"helpful_{len(st.session_state.messages)}"
-                            not_helpful_key = f"not_helpful_{len(st.session_state.messages)}"
+                            timestamp = int(time.time() * 1000)
+                            helpful_key = f"helpful_{timestamp}"
+                            not_helpful_key = f"not_helpful_{timestamp}"
 
-                            left, middle, right = st.columns(3)                            
-
-                            if left.button("Helpful", icon="👍", key=helpful_key):
-                                st.write("Why hello there")
-                                print("Positive feedback clicked", flush=True)
+                            cols = st.columns(3)
+                            
+                            if cols[0].button("Helpful", icon="👍", key=helpful_key):
+                                # When button is clicked, set session state variables
                                 st.session_state.feedback_action = "positive"
                                 st.session_state.feedback_answer = answer
-                                st.rerun()  # Force a rerun to process feedback
+                                st.experimental_rerun()  # Use experimental_rerun instead of rerun
                                     
-                            if right.button("Not Helpful", icon="👎", key=not_helpful_key):
+                            if cols[2].button("Not Helpful", icon="👎", key=not_helpful_key):
                                 st.session_state.feedback_action = "negative"
                                 st.session_state.feedback_answer = answer
-                                st.rerun()  # Force a rerun to process feedback
+                                st.experimental_rerun()  # Use experimental_rerun instead of rerun                            
 
                         # Add assistant message to chat history
                         st.session_state.messages.append({
