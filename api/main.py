@@ -523,6 +523,48 @@ def expand_question_references(question: str, history: List[Dict[str, Any]]) -> 
     
     return question
 
+def create_optimized_history(full_history, max_exchanges=3, max_tokens=800):
+    """
+    Create an optimized conversation history for the LLM.
+    
+    Args:
+        full_history: Complete conversation history
+        max_exchanges: Maximum number of back-and-forth exchanges to include
+        max_tokens: Approximate maximum tokens to include (rough estimate)
+        
+    Returns:
+        str: Optimized conversation history
+    """
+    # If history is short enough, use it all
+    if len(full_history) <= max_exchanges * 2:  # Each exchange is a user + assistant message
+        recent_history = full_history
+    else:
+        # Always include the most recent exchanges
+        recent_history = full_history[-max_exchanges*2:]
+    
+    # Format the recent history
+    history_text = ""
+    char_count = 0  # Rough approximation: ~4 chars per token
+    
+    for msg in recent_history:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        
+        # Create formatted message
+        formatted_msg = f"{role.capitalize()}: {content}\n\n"
+        
+        # Check if adding this would exceed our rough token budget
+        if char_count + len(formatted_msg) > max_tokens * 4:
+            # If we're about to exceed, add a note and stop
+            history_text += "...(earlier conversation summarized)...\n\n"
+            break
+            
+        # Otherwise add the message
+        history_text += formatted_msg
+        char_count += len(formatted_msg)
+    
+    return history_text
+
 async def log_feedback(
     feedback: Dict[str, Any],
     request_id: str,
