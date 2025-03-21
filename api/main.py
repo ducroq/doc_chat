@@ -1061,10 +1061,22 @@ async def chat(
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
                 conversation_context += f"{role.capitalize()}: {content}\n\n"
-            
+
             # Attempt to expand references in the current question
             processed_question = expand_question_references(query.question, recent_history)
-            logger.info(f"[{request_id}] Processed question: {processed_question}")
+
+            # TODO: test optimized conversation history
+            # # Alternatively, create optimized conversation history instead of using all history
+            # conversation_context = create_optimized_history(
+            #     query.conversation_history,
+            # these numbers could be env parameters
+            #     max_exchanges=3,  # Last 3 exchanges (6 messages)
+            #     max_tokens=800    # Rough budget for conversation context
+            # )
+            # # Attempt to expand references in the current question
+            # processed_question = expand_question_references(query.question, query.conversation_history)
+
+            logger.info(f"[{request_id}] Processed question: {processed_question}")            
 
         # Get the collection
         collection = client.collections.get("DocumentChunk")
