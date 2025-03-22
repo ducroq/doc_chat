@@ -1,25 +1,18 @@
 import axios from 'axios';
 
+// Get config from window.APP_CONFIG (injected at runtime)
+const config = window.APP_CONFIG || {
+  apiUrl: '/api',  // Use relative path for browser requests
+  apiKey: ''
+};
+
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  baseURL: config.apiUrl,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
+    'X-API-Key': config.apiKey
   }
 });
-
-// Request interceptor for API calls
-apiClient.interceptors.request.use(
-  config => {
-    const apiKey = localStorage.getItem('apiKey');
-    if (apiKey) {
-      config.headers['X-API-Key'] = apiKey;
-    }
-    return config;
-  },
-  error => {
-    return Promise.reject(error);
-  }
-);
 
 export default apiClient;

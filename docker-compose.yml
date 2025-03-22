@@ -90,13 +90,24 @@ services:
       - no-new-privileges:true
 
   vue-frontend:
-    build: ./vue-frontend
+    build: 
+      context: ./vue-frontend
+      dockerfile: Dockerfile
     ports:
       - "80:80"
     networks:
       - frontend
+    secrets:
+      - internal_api_key  # Add secrets access
+    environment:
+      - API_URL=http://api:8000
+      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
+      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key  # Set path to API key file
     depends_on:
-      - api      
+      - api
+    # user: "1000:1000"  # Use non-root user
+    security_opt:
+      - no-new-privileges:true
 
   # web-prototype:
   #   networks:

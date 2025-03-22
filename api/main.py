@@ -17,6 +17,8 @@ from collections import defaultdict
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
+
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from weaviate.classes.config import Configure, DataType
@@ -772,6 +774,15 @@ app = FastAPI(
     description="An EU-compliant RAG implementation using Weaviate and Mistral AI",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# Register Vue dev server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # API Key security scheme

@@ -12,13 +12,5 @@ export default {
       console.error('Error sending message:', error);
       throw error;
     }
-  },
-  
-  async submitFeedback(feedback) {
-    return api.post('/feedback', feedback);
-  },
-  
-  async getSystemStatus() {
-    return api.get('/status');
   }
-};
+}
