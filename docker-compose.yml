@@ -114,41 +114,5 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # web-prototype:
-  #   networks:
-  #     - frontend  
-  #   build: ./web-prototype
-  #   ports:
-  #     - "8501:8501"
-  #   secrets:
-  #     - internal_api_key
-  #   environment:
-  #     - API_URL=http://api:8000
-  #     - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-  #     - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
-  #   depends_on:
-  #     - api
-  #   volumes:
-  #     - ./web-prototype/.streamlit:/app/.streamlit
-  #   user: "1000:1000"  # Use non-root user
-  #   security_opt:
-  #     - no-new-privileges:true
-
-  # web-production:
-  #   networks:
-  #     - frontend   
-  #   build: ./web-production
-  #   ports:
-  #     - "8080:80"
-  #   environment:
-  #     - API_URL=http://api:8000
-  #     - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-  #   depends_on:
-  #     - api
-  #     - web-prototype
-  #   # user: "1000:1000"  # Use non-root user
-  #   # security_opt:
-  #   #   - no-new-privileges:true
-
 volumes:
   weaviate_data:
