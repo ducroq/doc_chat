@@ -3,6 +3,8 @@ secrets:
     file: ./secrets/mistral_api_key.txt
   internal_api_key:
     file: ./secrets/internal_api_key.txt
+  jwt_secret_key:
+    file: ./secrets/jwt_secret_key.txt
 
 networks:
   frontend:
@@ -66,6 +68,7 @@ services:
     secrets:
       - mistral_api_key
       - internal_api_key
+      - jwt_secret_key
     build: ./api
     ports:
       - 8000:8000
@@ -80,11 +83,13 @@ services:
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
       - CHAT_LOG_DIR=chat_data
       - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
+      - JWT_SECRET_KEY_FILE=/run/secrets/jwt_secret_key
     depends_on:
       - weaviate
       - t2v-transformers
     volumes:
-      - ./chat_data:/app/chat_data      
+      - ./chat_data:/app/chat_data
+      - ./users.json:/app/users.json
     user: "1000:1000"  # Use non-root user
     security_opt:
       - no-new-privileges:true

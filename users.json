@@ -1,0 +1,18 @@
+{
+  "admin": {
+    "username": "admin",
+    "full_name": "Administrator",
+    "email": "admin@example.com",
+    "hashed_password": "$2b$12$GPjaCvqCS44D3jMNFnq6fe2ruqiPZkS2ogXOG7AlfhO9bti0YfL0y",
+    "disabled": false,
+    "is_admin": true
+  },
+  "admin1": {
+    "username": "admin1",
+    "full_name": "Administrator",
+    "email": "admin@example.com",
+    "hashed_password": "$2b$12$Mv2Su6M3PwpmMsSIJ873deMioBxP6jeErPYFwclxJ.B55DmHb0O2i",
+    "disabled": false,
+    "is_admin": true
+  }
+}

@@ -7,17 +7,20 @@ import logging
 import hashlib
 import pathlib
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import deque
 from functools import lru_cache
 from typing import Optional, Dict, List, Any, Union, Tuple, Set, Annotated
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from collections import defaultdict
+import bcrypt
+import secrets
 
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
@@ -48,6 +51,10 @@ class Settings:
     CACHE_EXPIRY_SECONDS = int(os.getenv("CACHE_EXPIRY_SECONDS", "3600"))  # 1 hour
     MAX_QUERY_LENGTH = 1000
     MIN_QUERY_LENGTH = 3
+    JWT_SECRET_KEY_FILE = os.getenv("JWT_SECRET_KEY_FILE", "/run/secrets/jwt_secret_key")
+    JWT_SECRET_KEY = None
+    JWT_ALGORITHM = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 30    
 
 settings = Settings()
 
@@ -72,6 +79,22 @@ ip_request_counters = defaultdict(list)
 
 # Initialize chat logger
 chat_logger = None
+
+# OAuth2 password bearer for token-based authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Load the secret from file
+if os.path.exists(settings.JWT_SECRET_KEY_FILE):
+    try:
+        with open(settings.JWT_SECRET_KEY_FILE, "r") as f:
+            settings.JWT_SECRET_KEY = f.read().strip()
+    except Exception as e:
+        logger.error(f"Error reading JWT secret key from file: {str(e)}")
+
+if not settings.JWT_SECRET_KEY:
+    # Fall back to a randomly generated key (not ideal but better than a fixed default)
+    logger.warning("JWT secret key not found, generating a random one (will change on restart)")
+    settings.JWT_SECRET_KEY = secrets.token_hex(32)
 
 # Models
 class Query(BaseModel):
@@ -269,7 +292,25 @@ class FeedbackModel(BaseModel):
             return v
         except ValueError:
             raise ValueError("Timestamp must be in ISO format")
+class User(BaseModel):
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = None
 
+class UserInDB(User):
+    hashed_password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 # Error classes
 class MistralAPIError(Exception):
@@ -301,6 +342,82 @@ class WeaviateError(Exception):
         self.error_type = error_type
         self.is_transient = is_transient
         super().__init__(self.message)
+
+# Authentication helper functions
+def load_users_from_json():
+    users_file_path = 'users.json'
+    try:
+        if os.path.exists(users_file_path):
+            with open(users_file_path, 'r') as f:
+                return json.load(f)
+        logger.warning(f"Users file not found at {users_file_path}")
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading users from JSON: {str(e)}")
+        return {}
+
+def get_users_db():
+    return load_users_from_json()
+
+def verify_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
+def get_user(db, username: str):
+    # Load fresh user data each time to catch updates
+    users_db = get_users_db()
+    if username in users_db:
+        user_dict = users_db[username]
+        return UserInDB(**user_dict)
+    return None
+
+def authenticate_user(username: str, password: str):
+    user = get_user(None, username)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    
+    # Import JWT library only when needed
+    import jwt
+    
+    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    import jwt
+    from jwt.exceptions import PyJWTError
+    
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except PyJWTError:
+        raise credentials_exception
+    user = get_user(None, username=token_data.username)  # Remove the first parameter
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_active_user(current_user: User = Depends(get_current_user)):
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user        
 
 # Utility functions
 def check_token_budget(estimated_tokens: int) -> bool:
@@ -1405,6 +1522,44 @@ async def submit_feedback(
             "message": "Feedback received but logging is disabled"
         }
     
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/login")
+async def login(login_request: LoginRequest):
+    user = authenticate_user(login_request.username, login_request.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password"
+        )
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "username": user.username,
+        "full_name": user.full_name
+    }
+
+@app.get("/users/me/", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    return current_user    
+    
 # 1. First registered (executed last): Add security headers
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -1428,6 +1583,34 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
+
+@app.post("/debug-login")
+async def debug_login(username: str, password: str):
+    """Debug endpoint to check authentication directly"""
+    try:
+        # Load users file
+        if os.path.exists("users.json"):
+            with open("users.json", "r") as f:
+                users = json.load(f)
+            
+            if username in users:
+                # Get stored password hash
+                stored_hash = users[username]["hashed_password"]
+                
+                # Check if password matches
+                is_valid = bcrypt.checkpw(password.encode(), stored_hash.encode())
+                
+                return {
+                    "exists": True,
+                    "valid_password": is_valid,
+                    "hash_starts_with": stored_hash[:10] + "..." if stored_hash else None
+                }
+            else:
+                return {"exists": False, "message": "User not found"}
+        else:
+            return {"exists": False, "message": "Users file not found"}
+    except Exception as e:
+        return {"error": str(e)}
 
 # 2. Second registered (executed second): API key verification
 @app.middleware("http")
