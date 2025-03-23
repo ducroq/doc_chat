@@ -101,6 +101,28 @@ Simply place files in the `data/` directory. The system will automatically proce
    
 The system will automatically associate metadata with documents and display it when providing answers.
 
+### Authentication System
+
+The system includes a secure authentication system:
+
+- JWT-based authentication for API and web interfaces
+- User management via command-line tool
+- Bcrypt password hashing
+- Role-based access control
+
+To set up initial authentication after installation:
+
+```bash
+# Create a JWT secret key
+openssl rand -hex 32 > ./secrets/jwt_secret_key.txt
+chmod 600 ./secrets/jwt_secret_key.txt
+
+# Create an admin user 
+python manage_users.py create admin --generate-password --admin
+```
+
+For detailed information on authentication, see the [Authentication System Documentation](docs/security.md#authentication-system).
+
 ## Research & Analytics Features
 
 - **Chat Logging**: Optional logging of interactions for research purposes

@@ -69,8 +69,8 @@ For improved security, use Docker Secrets instead of environment variables for s
    ```bash
    mkdir -p ./secrets
    echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
-   chmod 600 ./secrets/mistral_api_key.txt   
-
+   chmod 600 ./secrets/mistral_api_key.txt
+   ```
 
 ### Direct Component Development
 
@@ -199,12 +199,93 @@ When converting PDFs or other documents to text files for processing:
 
 ## Security Features
 
-### Authentication and Authorization
+### Authentication System
 
+The system implements a JWT-based authentication flow for both the API and web interfaces.
 The system includes authentication for the web interface:
 - Password-based authentication using bcrypt for secure password hashing
 - Login session management using Streamlit session state
 - API key-based authorization for API endpoints
+
+#### Authentication Flow
+
+1. User submits credentials via login endpoint
+2. Server validates credentials against `users.json`
+3. If valid, server issues a JWT token
+4. Frontend stores token in localStorage
+5. Token is included in Authorization header for subsequent requests
+6. Protected endpoints validate the token
+
+#### API Implementation
+
+The authentication system is implemented in `api/main.py` with these key components:
+
+```python
+# User model definitions
+class User(BaseModel):
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = None
+
+class UserInDB(User):
+    hashed_password: str
+
+# Authentication verification
+def verify_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
+# User retrieval
+def get_user(username: str):
+    users_db = load_users_from_json()
+    if username in users_db:
+        user_dict = users_db[username]
+        return UserInDB(**user_dict)
+    return None
+
+# Authentication dependency
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    # Token validation logic
+    # ...
+    return user
+
+# Protected endpoint example
+@app.get("/protected")
+async def protected_route(current_user: User = Depends(get_current_active_user)):
+    return {"user": current_user}
+```
+
+#### User Management
+
+Users are stored in `users.json` and managed via the `manage_users.py` script. To add authentication to new endpoints, use the `get_current_active_user` dependency:
+
+```python
+@app.post("/new-endpoint")
+async def new_endpoint(data: SomeModel, current_user: User = Depends(get_current_active_user)):
+    # This endpoint is now protected by authentication
+    return {"result": "data", "user": current_user.username}
+```
+
+#### Frontend Implementation
+
+The Vue.js frontend handles authentication using:
+
+1. `authService.js` - Authentication logic and token management
+2. Router guards - Redirects to login page for protected routes
+3. Axios interceptors - Automatically adds Authorization header to requests
+
+#### Testing Authentication
+
+To test the authentication system:
+
+```bash
+# Create a test user
+python manage_users.py create testuser --generate-password
+
+# Make an authenticated request
+TOKEN=$(curl -s -X POST http://localhost:8000/login -H "Content-Type: application/json" -d '{"username":"testuser","password":"generated_password"}' | jq -r '.access_token')
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/users/me/
+```
 
 ### Request Validation
 

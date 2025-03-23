@@ -355,26 +355,74 @@ chmod 600 ./secrets/mistral_api_key.txt
 docker-compose restart api
 ```
 
-### Setting Up Authentication
+### Authentication Setup
 
-The web interface uses basic authentication. Default credentials are stored using bcrypt hashing in the Streamlit secrets.
+#### Initial User Setup
 
-To change the password:
+Before deploying the system to production, set up initial user accounts:
 
-1. Generate a new password hash:
-   ```bash
-   cd web-prototype
-   python hash_password.py
-   ```
+```bash
+# Generate a JWT secret key
+openssl rand -hex 32 > ./secrets/jwt_secret_key.txt
+chmod 600 ./secrets/jwt_secret_key.txt
 
-2. Update the `.streamlit/secrets.toml` file with the new hash:
-   ```toml
-   [passwords]
-   admin = "bcrypt_hash_here"
-   ```
+# Create an admin user
+python manage_users.py create admin --generate-password --admin --full-name "System Administrator" --email "admin@yourdomain.com"
+```
 
-3. Restart the web interface:
-   ```bash
-   docker-compose restart web-prototype
-   ```
-   
+The generated password will be displayed in the console. Make note of it as it won't be shown again.
+
+#### User Management in Production
+
+To manage users in a production environment:
+
+```bash
+# Connect to the production server
+ssh user@production-server
+
+# Navigate to the application directory
+cd /path/to/doc-chat
+
+# List existing users
+python manage_users.py list
+
+# Add a new user
+python manage_users.py create username --generate-password --full-name "User Name" --email "user@example.com"
+
+# Disable a user (e.g., when they leave the organization)
+python manage_users.py disable username
+
+# Reset a user's password
+python manage_users.py reset-password username --generate
+```
+
+After making changes to user accounts, restart the API service to ensure the changes take effect:
+
+```bash
+docker-compose restart api
+```
+
+#### Securing JWT Secret
+
+The JWT secret key is used to sign authentication tokens and should be treated as sensitive:
+
+1. Store the secret key in the `./secrets/jwt_secret_key.txt` file
+2. Ensure this file has restricted permissions (chmod 600)
+3. Backup this file securely - if lost, all users will need to log in again
+4. Rotate this secret periodically (e.g., every 90 days) for enhanced security
+
+When rotating the JWT secret:
+
+```bash
+# Generate a new secret
+openssl rand -hex 32 > ./secrets/jwt_secret_key.txt.new
+chmod 600 ./secrets/jwt_secret_key.txt.new
+
+# Replace the old secret
+mv ./secrets/jwt_secret_key.txt.new ./secrets/jwt_secret_key.txt
+
+# Restart the API to use the new secret
+docker-compose restart api
+```
+
+Note that changing the JWT secret will invalidate all existing sessions, requiring users to log in again.

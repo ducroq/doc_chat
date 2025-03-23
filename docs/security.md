@@ -105,6 +105,85 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; 
 Referrer-Policy: strict-origin-when-cross-origin
 ```
 
+## Authentication System
+
+### Overview
+
+The system implements a comprehensive authentication system that secures both the API and web interfaces using industry-standard security practices.
+
+### Authentication Mechanisms
+
+- **JWT-based Authentication**: JSON Web Tokens provide stateless authentication
+- **Password Security**: Bcrypt hashing with appropriate work factors
+- **Token Expiration**: Time-limited tokens with automatic expiration (30 minutes by default)
+- **User Management**: Command-line tool for user administration
+- **Role-Based Access**: Support for admin and regular user roles
+
+### Implementation Details
+
+#### Password Storage
+
+Passwords are never stored in plain text. The system uses bcrypt with the following security features:
+
+- Salted hashes unique to each user
+- Configurable work factor (default: 12 rounds)
+- Protection against timing attacks
+- Automatic hashing of new passwords
+
+#### Token Security
+
+JWT tokens are secured with:
+
+- HS256 encryption algorithm
+- Secure random-generated signing key
+- Short expiration timeframes
+- Token invalidation on password change
+
+#### User Management Security
+
+The user management script enforces:
+
+- Strong password requirements by default
+- Proper permission controls
+- Secure handling of generated passwords
+- Immutable authentication logs
+
+### Security Best Practices
+
+To maintain authentication security:
+
+1. **Rotate JWT Secret**: Periodically change the JWT signing secret
+2. **Regular Password Changes**: Enforce password changes every 90 days
+3. **Strong Passwords**: Use the `--generate-password` flag to create strong passwords
+4. **Minimum Access**: Only grant admin access where necessary
+5. **Account Deactivation**: Use `manage_users.py disable` rather than deleting accounts
+6. **Audit User List**: Regularly review the active users with `manage_users.py list`
+
+### Authentication Flows
+
+#### API Authentication Flow
+
+1. Client submits credentials to `/login` or `/token` endpoint
+2. Server validates credentials against `users.json`
+3. If valid, server generates a JWT token and returns it
+4. Client includes token in `Authorization: Bearer <token>` header
+5. Protected endpoints validate token via dependency injection
+
+#### Web Interface Authentication Flow
+
+1. User enters credentials in login form
+2. Frontend sends credentials to API login endpoint
+3. On success, token is stored in browser localStorage
+4. Vue Router navigation guards protect routes
+5. Automatic redirection to login page when token expires
+
+### Common Attack Mitigations
+
+- **Password Brute Force**: No rate limiting implemented yet (planned for future)
+- **User Enumeration**: Generic error messages don't reveal valid usernames
+- **Token Theft**: Short expiration time limits exposure if tokens are compromised
+- **CSRF**: Tokens in Authorization header are immune to CSRF attacks
+
 ## Security Best Practices
 
 When deploying and maintaining this system:
