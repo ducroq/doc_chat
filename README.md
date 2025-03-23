@@ -26,7 +26,7 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
 - **Vector Database**: Weaviate (Netherlands-based)
 - **LLM Provider**: Mistral AI (France-based)
 - **Backend**: FastAPI (Python)
-- **Frontend**: Streamlit (prototype) and Nginx/HTML/JS (production)
+- **Frontend** Vue.js + Nginx
 - **Deployment**: Docker containers on Hetzner (German cloud provider)
 
 ## Quick Start
@@ -70,7 +70,7 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
    ```
 
 5. Access the interfaces:
-   - Web interface: http://localhost:8501
+   - Web interface: http://localhost (served by Nginx)
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080
 
@@ -134,9 +134,11 @@ For detailed information on authentication, see the [Authentication System Docum
 For more detailed information about the system, check the following documentation:
 
 - [Architecture Overview](docs/architecture.md)
+- [Authentication](docs/authentication.md)
 - [Deployment Guide](docs/deployment-guide.md)
 - [User Guide](docs/user-guide.md)
 - [Developer Guide](docs/developer-guide.md)
+- [Security](docs/security.md)
 - [Privacy Notice](docs/privacy-notice.md)
 
 ## License

@@ -9,7 +9,7 @@ The system follows a modular architecture with several key components:
 1. **Document Processor**: Monitors a folder for text files, chunks text, and indexes in Weaviate
 2. **Vector Database**: Weaviate stores document chunks with vector embeddings
 3. **API Service**: FastAPI-based service that handles queries and orchestrates the RAG workflow
-4. **Web Interface**: Streamlit prototype and production web frontend
+4. **Web Interface**: Vue.js frontend served by Nginx
 5. **LLM Integration**: Mistral AI provides language model capabilities
 
 For a visual representation, refer to the architecture diagrams in the `docs/diagrams` directory.
@@ -18,6 +18,7 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
 
 ### Prerequisites
 
+- Node.js 18+ (for Vue.js development)
 - Python 3.9+
 - Docker and Docker Compose
 - Git
@@ -40,7 +41,11 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
    # Install dependencies for local development
    pip install -r api/requirements.txt
    pip install -r processor/requirements.txt
-   pip install -r web-prototype/requirements.txt
+   
+   # Install frontend dependencies
+   cd vue-frontend
+   npm install
+   cd ..
    ```
 
 3. **Configure environment variables**:
@@ -88,11 +93,12 @@ cd processor
 python processor.py
 ```
 
-#### Web Prototype
+#### Vue.js Frontend
 ```bash
-cd web-prototype
-streamlit run app.py
+cd vue-frontend
+npm run dev
 ```
+This starts a development server at http://localhost:5173 with hot reloading.
 
 ## Key Components and Code Structure
 
@@ -197,6 +203,41 @@ When converting PDFs or other documents to text files for processing:
 
 4. Create corresponding metadata files as needed
 
+## Frontend Development
+
+### Vue.js Frontend Architecture
+
+The frontend is built with Vue.js 3 and follows a component-based architecture:
+- `src/components/`: Reusable UI components
+- `src/views/`: Page components corresponding to routes
+- `src/services/`: API communication and authentication
+- `src/stores/`: Pinia state management stores
+
+### Build and Deployment
+
+When building the Docker image:
+1. Vue.js code is compiled to static assets (HTML, CSS, JS)
+2. Nginx serves these static files and acts as a reverse proxy for API requests
+3. The entrypoint.sh script generates the Nginx configuration with proper API settings
+
+### Local Development
+
+For local frontend development without Docker:
+```bash
+cd vue-frontend
+npm install
+npm run dev
+```
+This starts a development server at http://localhost:5173 with hot reloading.
+
+### Production Build
+
+The production deployment uses Nginx to serve the compiled Vue.js application:
+
+- Static assets are served directly by Nginx
+- API requests are proxied to the FastAPI backend
+- Nginx adds security headers and handles SPA routing
+
 ## Security Features
 
 ### Authentication System
@@ -204,7 +245,7 @@ When converting PDFs or other documents to text files for processing:
 The system implements a JWT-based authentication flow for both the API and web interfaces.
 The system includes authentication for the web interface:
 - Password-based authentication using bcrypt for secure password hashing
-- Login session management using Streamlit session state
+- JWT token storage in browser localStorage
 - API key-based authorization for API endpoints
 
 #### Authentication Flow
@@ -432,7 +473,7 @@ services:
     networks:
       - frontend
       - backend
-  web-prototype:
+  vue-frontend:
     networks:
       - frontend
 ```
@@ -459,10 +500,22 @@ To add support for new document types (PDF, DOCX, etc.):
 
 ### Modifying the Web Interface
 
-The web interface uses Streamlit for prototyping:
+To modify the Vue.js frontend:
 
-1. Edit `web-prototype/app.py` to modify the prototype interface
-2. For production changes, update the files in `web-production/`
+1. Navigate to the components directory to update UI elements:
+   ```bash
+   cd vue-frontend/src/components/
+   ```
+
+2. Edit view components in the views directory:
+   ```bash
+   cd vue-frontend/src/views/
+   ```
+
+3. Update services for API communication:
+   ```bash
+   cd vue-frontend/src/services/
+   ```
 
 ### Extending API Capabilities
 
@@ -518,7 +571,7 @@ The system includes a privacy-focused chat logging component for research. A com
 
 The feedback system consists of:
 
-1. **Frontend UI components** in the web interface
+1. **Frontend UI components** in the Vue.js interface
 2. **API endpoints** for submitting feedback
 3. **Storage mechanisms** for logging feedback
 4. **Privacy-compliant data handling** that respects GDPR requirements

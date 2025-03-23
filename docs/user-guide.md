@@ -10,10 +10,9 @@ The Document Chat system allows you to ask questions about Markdown documents in
 
 Access the web interface through your browser:
 
-- **Development environment**: http://localhost
-- **Production environment**: http://your-domain.com (or IP address)
+- **URL**: http://localhost (or http://your-domain.com in production)
 
-The interface has a clean, chat-based design that's intuitive to use.
+The interface has a clean, chat-based design powered by Vue.js and served through Nginx.
 
 ## Authentication
 

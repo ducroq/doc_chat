@@ -2,6 +2,26 @@
 
 This guide provides instructions for deploying the EU-Compliant Document Chat system in various environments.
 
+## Web Architecture
+
+The system uses a modern web architecture:
+
+1. **Frontend**: Vue.js Single Page Application (SPA)
+   - Built with Vue 3 and Pinia for state management
+   - Compiled to static assets during Docker build
+
+2. **Web Server**: Nginx
+   - Serves the compiled Vue.js application
+   - Acts as a reverse proxy for API requests
+   - Adds security headers
+   - Configured automatically via the entrypoint.sh script
+   
+3. **API Service**: FastAPI backend
+   - All actual data processing happens here
+   - Communicates with Weaviate and Mistral AI
+
+This architecture provides excellent performance, security, and scalability while maintaining a clean separation of concerns.
+
 ## Local Deployment
 
 ### Prerequisites
@@ -56,7 +76,7 @@ This guide provides instructions for deploying the EU-Compliant Document Chat sy
    ```
 
 5. **Access the interfaces**:
-   - Web interface: http://localhost:8501
+   - Web interface: http://localhost
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080
    - Privacy notice: http://localhost:8000/privacy
@@ -191,11 +211,11 @@ docker-compose up -d
 ```bash
 # Enable chat logging (edit .env file)
 sed -i 's/ENABLE_CHAT_LOGGING=false/ENABLE_CHAT_LOGGING=true/' .env
-docker-compose restart api web-prototype
+docker-compose restart api vue-frontend
 
 # Disable chat logging
 sed -i 's/ENABLE_CHAT_LOGGING=true/ENABLE_CHAT_LOGGING=false/' .env
-docker-compose restart api web-prototype
+docker-compose restart api vue-frontend
 
 # Delete all chat logs (if needed for GDPR compliance)
 rm -rf chat_data/chat_log_*.jsonl
@@ -341,7 +361,7 @@ openssl rand -hex 32 > ./secrets/internal_api_key.txt
 chmod 600 ./secrets/internal_api_key.txt
 
 # Restart services to apply the new key
-docker-compose restart api web-prototype
+docker-compose restart api vue-frontend
 ```
 
 For Mistral API key, update the key in their portal, then:
