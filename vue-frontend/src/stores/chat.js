@@ -20,11 +20,15 @@ export const useChatStore = defineStore('chat', {
       this.error = null;
       
       try {
+        // Generate a unique request ID for this conversation
+        const requestId = Date.now().toString();
+        
         // Add user message to UI
         this.messages.push({
           role: 'user',
           content,
           id: Date.now().toString(),
+          requestId: requestId
         });
         
         // Add to conversation history for context
@@ -37,12 +41,13 @@ export const useChatStore = defineStore('chat', {
         // Send to API
         const response = await chatService.sendMessage(content, this.conversationHistory);
         
-        // Add response to messages
+        // Add response to messages - include the same requestId for tracking
         this.messages.push({
           role: 'assistant',
           content: response.answer,
           sources: response.sources || [],
           id: Date.now().toString(),
+          requestId: requestId  // Use the same requestId to link messages
         });
         
         // Add to conversation history
@@ -68,15 +73,29 @@ export const useChatStore = defineStore('chat', {
         this.isLoading = false;
       }
     },
+
+    async submitFeedback(feedbackParams) {
+      try {
+        // Create a feedback object that exactly matches what the API expects
+        const feedbackData = {
+          request_id: Date.now().toString(), // A unique ID for this feedback submission
+          message_id: feedbackParams.messageId,
+          rating: feedbackParams.rating, // Must be "positive" or "negative"
+          feedback_text: feedbackParams.feedbackText || null,
+          categories: [], // Optional categories if implemented
+          timestamp: new Date().toISOString() // Must be ISO format
+        };
     
-    async submitFeedback(messageId, rating, feedbackText = null) {
-      return chatService.submitFeedback({
-        message_id: messageId,
-        request_id: Date.now().toString(),
-        rating,
-        feedback_text: feedbackText,
-        timestamp: new Date().toISOString()
-      });
+        console.log('Submitting feedback:', feedbackData);
+        
+        // Send the feedback to the API
+        const response = await chatService.submitFeedback(feedbackData);
+        console.log('Feedback submitted successfully:', response);
+        return response;
+      } catch (error) {
+        console.error('Failed to submit feedback:', error);
+        throw error;
+      }
     },
     
     async checkSystemStatus() {

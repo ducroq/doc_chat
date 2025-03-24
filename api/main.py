@@ -96,6 +96,74 @@ if not settings.JWT_SECRET_KEY:
     logger.warning("JWT secret key not found, generating a random one (will change on restart)")
     settings.JWT_SECRET_KEY = secrets.token_hex(32)
 
+# Helper functions
+def validate_user_input_content(v: str) -> str:
+    """
+    Validate that user input does not contain malicious patterns.
+    
+    Args:
+        v: The  string to validate
+        
+    Returns:
+        str: The validated string
+        
+    Raises:
+        ValueError: If the string contains dangerous patterns
+    """
+    # 1. Check for script injection patterns
+    dangerous_patterns = [
+        '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
+        'ondblclick=', 'onmouseover=', 'onmouseout=', 'onfocus=', 'onblur=',
+        'oninput=', 'onchange=', 'onsubmit=', 'onreset=', 'onselect=',
+        'onkeydown=', 'onkeypress=', 'onkeyup=', 'ondragenter=', 'ondragleave=',
+        'data:text/html', 'vbscript:', 'expression(', 'document.cookie',
+        'document.write', 'window.location', 'eval(', 'exec('
+    ]
+    
+    for pattern in dangerous_patterns:
+        if pattern.lower() in v.lower():
+            raise ValueError(f'Potentially unsafe input detected: {pattern}')
+    
+    # 2. Check for SQL injection patterns - Fixed regex
+    sql_patterns = [
+        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'UNION',
+        'FROM', 'WHERE', '1=1', 'OR 1=1', 'OR TRUE', '--'
+    ]
+    
+    # Count SQL keywords manually to avoid regex issues
+    sql_count = 0
+    for pattern in sql_patterns:
+        # Check for whole words only
+        if re.search(r'\b' + re.escape(pattern) + r'\b', v.upper()):
+            sql_count += 1
+    
+    # Allow a few keywords as they might be in natural language
+    if sql_count >= 3:
+        raise ValueError('Potential SQL injection pattern detected')
+    
+    # 3. Check for command injection patterns
+    cmd_patterns = [
+        ';', '&&', '||', '`', '$(',  # Command chaining in bash/shell
+        '| ', '>>', '>', '<', 'ping ', 'wget ', 'curl ', 
+        'chmod ', 'rm -', 'sudo ', '/etc/', '/bin/'
+    ]
+    
+    for pattern in cmd_patterns:
+        if pattern in v:
+            raise ValueError(f'Potential command injection pattern detected: {pattern}')
+    
+    # 4. Check for excessive special characters (might indicate an attack)
+    special_char_count = sum(1 for char in v if char in '!@#$%^&*()+={}[]|\\:;"\'<>?/~`')
+    if special_char_count > len(v) * 0.3:  # If more than 30% are special characters
+        raise ValueError('Too many special characters in input')
+        
+    # 5. Check for extremely repetitive patterns (DoS attempts)
+    if re.search(r'(.)\1{20,}', v):  # Same character repeated 20+ times
+        raise ValueError('Input contains excessive repetition')
+        
+    return v
+
+
 # Models
 class Query(BaseModel):
     """
@@ -121,59 +189,9 @@ class Query(BaseModel):
         Raises:
             ValueError: If the question contains dangerous patterns
         """
-        # 1. Check for script injection patterns
-        dangerous_patterns = [
-            '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
-            'ondblclick=', 'onmouseover=', 'onmouseout=', 'onfocus=', 'onblur=',
-            'oninput=', 'onchange=', 'onsubmit=', 'onreset=', 'onselect=',
-            'onkeydown=', 'onkeypress=', 'onkeyup=', 'ondragenter=', 'ondragleave=',
-            'data:text/html', 'vbscript:', 'expression(', 'document.cookie',
-            'document.write', 'window.location', 'eval(', 'exec('
-        ]
-        
-        for pattern in dangerous_patterns:
-            if pattern.lower() in v.lower():
-                raise ValueError(f'Potentially unsafe input detected: {pattern}')
-        
-        # 2. Check for SQL injection patterns - Fixed regex
-        sql_patterns = [
-            'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'UNION',
-            'FROM', 'WHERE', '1=1', 'OR 1=1', 'OR TRUE', '--'
-        ]
-        
-        # Count SQL keywords manually to avoid regex issues
-        sql_count = 0
-        for pattern in sql_patterns:
-            # Check for whole words only
-            if re.search(r'\b' + re.escape(pattern) + r'\b', v.upper()):
-                sql_count += 1
-        
-        # Allow a few keywords as they might be in natural language
-        if sql_count >= 3:
-            raise ValueError('Potential SQL injection pattern detected')
-        
-        # 3. Check for command injection patterns
-        cmd_patterns = [
-            ';', '&&', '||', '`', '$(',  # Command chaining in bash/shell
-            '| ', '>>', '>', '<', 'ping ', 'wget ', 'curl ', 
-            'chmod ', 'rm -', 'sudo ', '/etc/', '/bin/'
-        ]
-        
-        for pattern in cmd_patterns:
-            if pattern in v:
-                raise ValueError(f'Potential command injection pattern detected: {pattern}')
-        
-        # 4. Check for excessive special characters (might indicate an attack)
-        special_char_count = sum(1 for char in v if char in '!@#$%^&*()+={}[]|\\:;"\'<>?/~`')
-        if special_char_count > len(v) * 0.3:  # If more than 30% are special characters
-            raise ValueError('Too many special characters in input')
-            
-        # 5. Check for extremely repetitive patterns (DoS attempts)
-        if re.search(r'(.)\1{20,}', v):  # Same character repeated 20+ times
-            raise ValueError('Input contains excessive repetition')
-            
+        validate_user_input_content(v)
         return v
-
+    
     @field_validator('question')
     @classmethod
     def normalize_question(cls, v: str) -> str:
@@ -272,26 +290,26 @@ class FeedbackModel(BaseModel):
     message_id: str
     rating: str = Field(..., description="positive or negative")
     feedback_text: Optional[str] = None
-    categories: Optional[List[str]] = None
+    categories: Optional[List[str]] = []  # Change None to [] as default
     timestamp: str
     
     @field_validator('rating')
     @classmethod
     def validate_rating(cls, v: str) -> str:
         """Validate rating is positive or negative."""
-        if v not in ["positive", "negative"]:
+        if v.lower() not in ["positive", "negative"]:
             raise ValueError('Rating must be "positive" or "negative"')
+        return v.lower()  # Normalize to lowercase
+        
+    @field_validator('message_id')
+    @classmethod
+    def validate_message_id(cls, v: str) -> str:
+        """Validate message_id is not empty."""
+        if not v or not v.strip():
+            raise ValueError("message_id cannot be empty")
+        validate_user_input_content(v)
         return v
     
-    @field_validator('timestamp')
-    @classmethod
-    def validate_timestamp(cls, v: str) -> str:
-        """Validate timestamp is in ISO format."""
-        try:
-            datetime.fromisoformat(v)
-            return v
-        except ValueError:
-            raise ValueError("Timestamp must be in ISO format")
 class User(BaseModel):
     username: str
     email: Optional[str] = None
@@ -617,12 +635,12 @@ def expand_question_references(question: str, history: List[Dict[str, Any]]) -> 
     # Get key topics from recent conversation
     topics = []
     
-    # Extract last 2 exchanges at most
+    # Extract last 2 exchanges at most - FIX: Define recent_turns first
     recent_turns = min(2, len(history) // 2)
-    recent_history = history[-recent_turns*2:] if recent_history > 0 else history
+    history_subset = history[-recent_turns*2:] if recent_turns > 0 else history
     
     # Simple keyword extraction (could be enhanced with NLP)
-    for msg in recent_history:
+    for msg in history_subset:
         if msg.get("role") == "user":
             # Extract nouns from user questions as potential topics
             words = msg.get("content", "").split()
@@ -1130,6 +1148,22 @@ async def get_document_statistics():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")  
 
+
+# DEBUG, REMOVE IN PRODUCTION
+@app.middleware("http")
+async def log_raw_request(request: Request, call_next):
+    """Log raw request data for debugging."""
+    # Only log for the chat endpoint
+    if request.url.path == "/chat":
+        try:
+            body = await request.body()
+            logger.info(f"RAW REQUEST to /chat: {body.decode()}")
+        except Exception as e:
+            logger.error(f"Failed to log raw request: {e}")
+    
+    response = await call_next(request)
+    return response
+
 # Chat endpoint
 @app.post("/chat", response_model=APIResponse)
 async def chat(
@@ -1462,7 +1496,96 @@ async def privacy_notice():
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
+
+
+# DEBUG, REMOVE IN PRODUCTION
+@app.middleware("http")
+async def log_raw_request(request: Request, call_next):
+    """Log raw request data for debugging."""
+    # Only log for the feedback endpoint
+    if request.url.path == "/feedback":
+        try:
+            body = await request.body()
+            logger.info(f"RAW REQUEST to /feedback: {body.decode()}")
+        except Exception as e:
+            logger.error(f"Failed to log raw request: {e}")
     
+    response = await call_next(request)
+    return response
+
+# @app.post("/feedback")
+# async def submit_feedback(request: Request):
+#     """
+#     Submit feedback on a previous response.
+#     """
+#     request_id = str(uuid.uuid4())[:8]
+    
+#     try:
+#         # Parse the request body manually
+#         body = await request.body()
+#         body_str = body.decode()
+#         logger.info(f"[{request_id}] Raw feedback body: {body_str}")
+        
+#         # Parse JSON and validate
+#         body_json = json.loads(body_str)
+#         feedback = FeedbackModel(**body_json)
+        
+#         logger.info(f"[{request_id}] Received feedback for request {feedback.request_id}")
+        
+#         # Process and store feedback
+#         if chat_logger and chat_logger.enabled:
+#             try:
+#                 metadata = {
+#                     "timestamp": datetime.now().isoformat(),
+#                     "request_id": request_id,
+#                     "original_request_id": feedback.request_id,
+#                     "message_id": feedback.message_id
+#                 }
+                
+#                 # Get user_id from header if available
+#                 user_id = request.headers.get("user_id")
+                
+#                 # Create background task for logging
+#                 background_tasks = BackgroundTasks()
+#                 background_tasks.add_task(
+#                     log_feedback,
+#                     feedback=feedback.model_dump(),
+#                     request_id=request_id,
+#                     user_id=user_id,
+#                     metadata=metadata
+#                 )
+                
+#                 return {
+#                     "status": "success",
+#                     "message": "Feedback received"
+#                 }
+#             except Exception as e:
+#                 logger.error(f"[{request_id}] Error storing feedback: {str(e)}")
+#                 return {
+#                     "status": "error",
+#                     "message": "Failed to store feedback"
+#                 }
+#         else:
+#             logger.warning(f"[{request_id}] Feedback received but logging is disabled")
+#             return {
+#                 "status": "success",
+#                 "message": "Feedback received but logging is disabled"
+#             }
+            
+#     except ValidationError as ve:
+#         error_details = ve.errors()
+#         logger.error(f"[{request_id}] Validation error: {error_details}")
+#         return JSONResponse(
+#             status_code=422,
+#             content={"detail": error_details}
+#         )
+#     except Exception as e:
+#         logger.error(f"[{request_id}] Error processing feedback: {str(e)}")
+#         return JSONResponse(
+#             status_code=500,
+#             content={"detail": f"Error processing request: {str(e)}"}
+#         )
+        
 @app.post("/feedback")
 async def submit_feedback(
     feedback: FeedbackModel,
@@ -1485,6 +1608,7 @@ async def submit_feedback(
     request_id = str(uuid.uuid4())[:8]  # Generate an ID for this feedback submission
     
     logger.info(f"[{request_id}] Received feedback for request {feedback.request_id}")
+    logger.info(f"[{request_id}] Feedback details: {feedback.model_dump()}")
     
     # Process and store feedback
     if chat_logger and chat_logger.enabled:
@@ -1583,34 +1707,6 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
-
-@app.post("/debug-login")
-async def debug_login(username: str, password: str):
-    """Debug endpoint to check authentication directly"""
-    try:
-        # Load users file
-        if os.path.exists("users.json"):
-            with open("users.json", "r") as f:
-                users = json.load(f)
-            
-            if username in users:
-                # Get stored password hash
-                stored_hash = users[username]["hashed_password"]
-                
-                # Check if password matches
-                is_valid = bcrypt.checkpw(password.encode(), stored_hash.encode())
-                
-                return {
-                    "exists": True,
-                    "valid_password": is_valid,
-                    "hash_starts_with": stored_hash[:10] + "..." if stored_hash else None
-                }
-            else:
-                return {"exists": False, "message": "User not found"}
-        else:
-            return {"exists": False, "message": "Users file not found"}
-    except Exception as e:
-        return {"error": str(e)}
 
 # 2. Second registered (executed second): API key verification
 @app.middleware("http")

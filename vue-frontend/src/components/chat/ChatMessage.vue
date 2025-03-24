@@ -35,6 +35,10 @@
             👎 Not Helpful
           </button>
         </div>
+
+        <div v-if="feedbackSubmitted" class="feedback-confirmation">
+          Thank you for your feedback!
+        </div>        
         
         <!-- Detailed feedback form -->
         <div v-if="showFeedbackForm" class="feedback-form">
@@ -67,6 +71,8 @@ const props = defineProps({
 const chatStore = useChatStore();
 const showFeedbackForm = ref(false);
 const feedbackText = ref('');
+
+const feedbackSubmitted = ref(false);
 
 const formattedContent = computed(() => {
   return marked(props.message.content);
@@ -116,13 +122,30 @@ function formatCitation(source) {
 
 async function submitFeedback(rating) {
   try {
-    await chatStore.submitFeedback(props.message.id, rating, feedbackText.value);
+    // Get the original request ID from the message if available
+    // or use the message ID as a fallback
+    const originalRequestId = props.message.requestId || props.message.id;
+    
+    await chatStore.submitFeedback({
+      originalRequestId: originalRequestId,
+      messageId: props.message.id, 
+      rating: rating,
+      feedbackText: feedbackText.value
+    });
+    
+    // Reset and close the form
     showFeedbackForm.value = false;
     feedbackText.value = '';
-    // Show success notification
+    
+    // Show a success message to the user
+    feedbackSubmitted.value = true;
+    setTimeout(() => {
+      feedbackSubmitted.value = false;
+    }, 3000);
   } catch (error) {
     console.error('Failed to submit feedback:', error);
-    // Show error notification
+    // Show an error message briefly
+    alert('Failed to submit feedback. Please try again.');
   }
 }
 </script>
@@ -212,5 +235,15 @@ async function submitFeedback(rating) {
 
 .error-message {
   color: #d32f2f;
+}
+
+.feedback-confirmation {
+  margin-top: 12px;
+  padding: 8px;
+  background-color: #e6f7e6;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #2e7d32;
+  text-align: center;
 }
 </style>

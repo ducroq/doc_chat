@@ -5,7 +5,7 @@
     </div>
     
     <div class="sidebar-content">
-      <div class="system-status">
+      <!-- <div class="system-status">
         <h4>System Status</h4>
         <div class="status-item">
           <span :class="['status-indicator', getStatusClass(chatStore.systemStatus.api)]"></span>
@@ -19,7 +19,7 @@
           <span :class="['status-indicator', getStatusClass(chatStore.systemStatus.mistral_api)]"></span>
           <span>LLM Service: {{ chatStore.systemStatus.mistral_api }}</span>
         </div>
-      </div>
+      </div> -->
       
       <div class="sidebar-actions">
         <button class="action-button" @click="newConversation">
