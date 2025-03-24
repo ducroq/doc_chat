@@ -86,10 +86,13 @@ function formatCitation(source) {
   const filename = source.filename || 'Unknown';
   const chunkId = source.chunkId || 'Unknown';
   
+  // Base citation starts with filename or title
+  let citation = filename;
+  
   // If we have metadata, use it to create a richer citation
   if (source.metadata) {
     const metadata = source.metadata;
-    let citation = metadata.title ? `${metadata.title}` : filename;
+    citation = metadata.title ? `${metadata.title}` : filename;
     
     if (metadata.itemType) {
       citation += ` [${metadata.itemType}]`;
@@ -110,17 +113,24 @@ function formatCitation(source) {
     if (metadata.date) {
       citation += ` (${metadata.date})`;
     }
-    
-    // Add page if available
-    if (source.page) {
-      citation += `, Page ${source.page}`;
-    }
-    
-    return citation;
   }
   
-  // Simple citation without metadata
-  return `${filename} (Chunk ${chunkId})`;
+  // Add section/heading if available
+  if (source.heading) {
+    citation += `, Section: "${source.heading}"`;
+  }
+  
+  // Add page if available
+  if (source.page) {
+    citation += `, Page ${source.page}`;
+  }
+  
+  // Add chunk ID as a fallback reference
+  if (!source.heading && !source.page) {
+    citation += ` (Chunk ${chunkId})`;
+  }
+  
+  return citation;
 }
 
 async function submitFeedback(rating) {
