@@ -13,6 +13,7 @@ export default {
       throw error;
     }
   },
+  
   async submitFeedback(feedbackData) {
     try {
       console.log('Sending feedback data to API:', feedbackData);
@@ -27,23 +28,23 @@ export default {
         throw new Error('Rating must be "positive" or "negative"');
       }
   
-      // Create a payload with only the fields the API expects
-      const apiPayload = {
-        request_id: String(feedbackData.request_id),
-        message_id: String(feedbackData.message_id),
-        rating: feedbackData.rating,
-        feedback_text: feedbackData.feedback_text || null,
-        categories: Array.isArray(feedbackData.categories) ? feedbackData.categories : [],
-        timestamp: feedbackData.timestamp
-      };
-  
-      const response = await api.post('/feedback', apiPayload);
+      const response = await api.post('/feedback', feedbackData);
       return response.data;
     } catch (error) {
       console.error('Error submitting feedback:', error);
       console.error('Error response:', error.response?.data);
       throw error;
     }
+  },
+  
+  // Add this method for getting system status
+  async getSystemStatus() {
+    try {
+      const response = await api.get('/status');
+      return response.data;
+    } catch (error) {
+      console.error('Error getting system status:', error);
+      throw error;
+    }
   }
 }
-

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import chatService from '../services/chatService';
+import api from '../services/api';
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -75,14 +76,15 @@ export const useChatStore = defineStore('chat', {
     },
 
     async submitFeedback(feedbackParams) {
+      console.log('Submitting feedback: ', feedbackParams);
       try {
         // Create a feedback object that exactly matches what the API expects
         const feedbackData = {
-          request_id: Date.now().toString(), // A unique ID for this feedback submission
+          request_id: feedbackParams.originalRequestId || Date.now().toString(),
           message_id: feedbackParams.messageId,
           rating: feedbackParams.rating, // Must be "positive" or "negative"
           feedback_text: feedbackParams.feedbackText || null,
-          categories: [], // Optional categories if implemented
+          categories: feedbackParams.categories || [], // Optional categories if implemented
           timestamp: new Date().toISOString() // Must be ISO format
         };
     
@@ -100,12 +102,17 @@ export const useChatStore = defineStore('chat', {
     
     async checkSystemStatus() {
       try {
-        const response = await chatService.getSystemStatus();
-        this.systemStatus = response;
-        return response;
+        // Use a simple GET request to the status endpoint
+        const response = await api.get('/status');
+        if (response && response.data) {
+          this.systemStatus = response.data;
+          console.log('System status updated:', this.systemStatus);
+        }
+        return this.systemStatus;
       } catch (error) {
         console.error('Failed to check system status:', error);
-        return null;
+        // Don't update the system status on error
+        return this.systemStatus;
       }
     },
     

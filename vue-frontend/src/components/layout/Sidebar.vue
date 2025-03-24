@@ -5,21 +5,21 @@
     </div>
     
     <div class="sidebar-content">
-      <!-- <div class="system-status">
+      <div class="system-status">
         <h4>System Status</h4>
         <div class="status-item">
-          <span :class="['status-indicator', getStatusClass(chatStore.systemStatus.api)]"></span>
-          <span>API Service: {{ chatStore.systemStatus.api }}</span>
+          <span :class="['status-indicator', getStatusClass(systemStatus.api)]"></span>
+          <span>API Service: {{ systemStatus.api }}</span>
         </div>
         <div class="status-item">
-          <span :class="['status-indicator', getStatusClass(chatStore.systemStatus.weaviate)]"></span>
-          <span>Vector Database: {{ chatStore.systemStatus.weaviate }}</span>
+          <span :class="['status-indicator', getStatusClass(systemStatus.weaviate)]"></span>
+          <span>Vector Database: {{ systemStatus.weaviate }}</span>
         </div>
         <div class="status-item">
-          <span :class="['status-indicator', getStatusClass(chatStore.systemStatus.mistral_api)]"></span>
-          <span>LLM Service: {{ chatStore.systemStatus.mistral_api }}</span>
+          <span :class="['status-indicator', getStatusClass(systemStatus.mistral_api)]"></span>
+          <span>LLM Service: {{ systemStatus.mistral_api }}</span>
         </div>
-      </div> -->
+      </div>
       
       <div class="sidebar-actions">
         <button class="action-button" @click="newConversation">
@@ -34,16 +34,27 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useChatStore } from '../../stores/chat';
 import authService from '../../services/authService';
 
 const router = useRouter();
 const chatStore = useChatStore();
+const systemStatus = ref({
+  api: 'unknown',
+  weaviate: 'unknown',
+  mistral_api: 'unknown'
+});
 
-onMounted(() => {
-  chatStore.checkSystemStatus();
+onMounted(async () => {
+  try {
+    // Try to check system status but don't break if it fails
+    const status = await chatStore.checkSystemStatus();
+    systemStatus.value = status || systemStatus.value;
+  } catch (error) {
+    console.warn('Could not fetch system status:', error);
+  }
 });
 
 function getStatusClass(status) {
