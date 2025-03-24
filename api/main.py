@@ -1148,22 +1148,6 @@ async def get_document_statistics():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")  
 
-
-# DEBUG, REMOVE IN PRODUCTION
-@app.middleware("http")
-async def log_raw_request(request: Request, call_next):
-    """Log raw request data for debugging."""
-    # Only log for the chat endpoint
-    if request.url.path == "/chat":
-        try:
-            body = await request.body()
-            logger.info(f"RAW REQUEST to /chat: {body.decode()}")
-        except Exception as e:
-            logger.error(f"Failed to log raw request: {e}")
-    
-    response = await call_next(request)
-    return response
-
 # Chat endpoint
 @app.post("/chat", response_model=APIResponse)
 async def chat(
@@ -1496,95 +1480,6 @@ async def privacy_notice():
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
-
-
-# DEBUG, REMOVE IN PRODUCTION
-@app.middleware("http")
-async def log_raw_request(request: Request, call_next):
-    """Log raw request data for debugging."""
-    # Only log for the feedback endpoint
-    if request.url.path == "/feedback":
-        try:
-            body = await request.body()
-            logger.info(f"RAW REQUEST to /feedback: {body.decode()}")
-        except Exception as e:
-            logger.error(f"Failed to log raw request: {e}")
-    
-    response = await call_next(request)
-    return response
-
-# @app.post("/feedback")
-# async def submit_feedback(request: Request):
-#     """
-#     Submit feedback on a previous response.
-#     """
-#     request_id = str(uuid.uuid4())[:8]
-    
-#     try:
-#         # Parse the request body manually
-#         body = await request.body()
-#         body_str = body.decode()
-#         logger.info(f"[{request_id}] Raw feedback body: {body_str}")
-        
-#         # Parse JSON and validate
-#         body_json = json.loads(body_str)
-#         feedback = FeedbackModel(**body_json)
-        
-#         logger.info(f"[{request_id}] Received feedback for request {feedback.request_id}")
-        
-#         # Process and store feedback
-#         if chat_logger and chat_logger.enabled:
-#             try:
-#                 metadata = {
-#                     "timestamp": datetime.now().isoformat(),
-#                     "request_id": request_id,
-#                     "original_request_id": feedback.request_id,
-#                     "message_id": feedback.message_id
-#                 }
-                
-#                 # Get user_id from header if available
-#                 user_id = request.headers.get("user_id")
-                
-#                 # Create background task for logging
-#                 background_tasks = BackgroundTasks()
-#                 background_tasks.add_task(
-#                     log_feedback,
-#                     feedback=feedback.model_dump(),
-#                     request_id=request_id,
-#                     user_id=user_id,
-#                     metadata=metadata
-#                 )
-                
-#                 return {
-#                     "status": "success",
-#                     "message": "Feedback received"
-#                 }
-#             except Exception as e:
-#                 logger.error(f"[{request_id}] Error storing feedback: {str(e)}")
-#                 return {
-#                     "status": "error",
-#                     "message": "Failed to store feedback"
-#                 }
-#         else:
-#             logger.warning(f"[{request_id}] Feedback received but logging is disabled")
-#             return {
-#                 "status": "success",
-#                 "message": "Feedback received but logging is disabled"
-#             }
-            
-#     except ValidationError as ve:
-#         error_details = ve.errors()
-#         logger.error(f"[{request_id}] Validation error: {error_details}")
-#         return JSONResponse(
-#             status_code=422,
-#             content={"detail": error_details}
-#         )
-#     except Exception as e:
-#         logger.error(f"[{request_id}] Error processing feedback: {str(e)}")
-#         return JSONResponse(
-#             status_code=500,
-#             content={"detail": f"Error processing request: {str(e)}"}
-#         )
         
 @app.post("/feedback")
 async def submit_feedback(
@@ -1679,6 +1574,37 @@ async def login(login_request: LoginRequest):
         "username": user.username,
         "full_name": user.full_name
     }
+
+@app.post("/admin/flush-logs")
+async def flush_logs(api_key: str = Depends(get_api_key)):
+    """
+    Manually flush all log buffers to disk.
+    
+    Args:
+        api_key: API key for authentication
+    
+    Returns:
+        dict: Status message
+    """
+    try:
+        if chat_logger and chat_logger.enabled:
+            # Flush regular chat logs
+            if hasattr(chat_logger, "_flush_buffer"):
+                chat_logger._flush_buffer()
+                
+            # Flush feedback logs if that method exists
+            if hasattr(chat_logger, "_flush_feedback_buffer"):
+                chat_logger._flush_feedback_buffer()
+                
+            return {"status": "success", "message": "All log buffers flushed to disk"}
+        else:
+            return {"status": "warning", "message": "Chat logging is not enabled"}
+    except Exception as e:
+        logger.error(f"Error flushing logs: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error flushing logs: {str(e)}"
+        )
 
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
