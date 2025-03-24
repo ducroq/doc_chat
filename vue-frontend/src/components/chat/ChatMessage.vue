@@ -21,16 +21,18 @@
         </div>
         
         <!-- Feedback buttons (only for assistant messages) -->
-        <div v-if="message.role === 'assistant' && !message.error" class="feedback">
+        <div v-if="message.role === 'assistant' && !message.error && !feedbackSubmitted" class="feedback">
           <button 
             class="feedback-btn positive" 
             @click="submitFeedback('positive')"
+            :disabled="feedbackSubmitted"
           >
             👍 Helpful
           </button>
           <button 
             class="feedback-btn negative" 
             @click="showFeedbackForm = true"
+            :disabled="feedbackSubmitted"
           >
             👎 Not Helpful
           </button>
@@ -41,14 +43,15 @@
         </div>        
         
         <!-- Detailed feedback form -->
-        <div v-if="showFeedbackForm" class="feedback-form">
+        <div v-if="showFeedbackForm && !feedbackSubmitted" class="feedback-form">
           <textarea 
             v-model="feedbackText" 
             placeholder="What was wrong with this response?"
+            :disabled="feedbackSubmitted"
           ></textarea>
           <div class="form-actions">
-            <button @click="submitFeedback('negative')">Submit</button>
-            <button @click="showFeedbackForm = false">Cancel</button>
+            <button @click="submitFeedback('negative')" :disabled="feedbackSubmitted">Submit</button>
+            <button @click="showFeedbackForm = false" :disabled="feedbackSubmitted">Cancel</button>
           </div>
         </div>
       </div>
@@ -133,15 +136,14 @@ async function submitFeedback(rating) {
       feedbackText: feedbackText.value
     });
     
-    // Reset and close the form
-    showFeedbackForm.value = false;
-    feedbackText.value = '';
-    
-    // Show a success message to the user
+    // Set feedbackSubmitted to true to disable and hide the feedback controls
     feedbackSubmitted.value = true;
-    setTimeout(() => {
-      feedbackSubmitted.value = false;
-    }, 3000);
+    
+    // Hide the feedback form
+    showFeedbackForm.value = false;
+    
+    // Reset feedback text
+    feedbackText.value = '';
   } catch (error) {
     console.error('Failed to submit feedback:', error);
     // Show an error message briefly
@@ -207,12 +209,17 @@ async function submitFeedback(rating) {
   transition: background-color 0.2s;
 }
 
-.feedback-btn.positive:hover {
+.feedback-btn.positive:hover:not(:disabled) {
   background-color: #e6f7e6;
 }
 
-.feedback-btn.negative:hover {
+.feedback-btn.negative:hover:not(:disabled) {
   background-color: #fff0f0;
+}
+
+.feedback-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .feedback-form {
@@ -228,9 +235,19 @@ async function submitFeedback(rating) {
   margin-bottom: 8px;
 }
 
+.feedback-form textarea:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;
+}
+
+.form-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .error-message {
