@@ -58,7 +58,7 @@ onMounted(async () => {
 });
 
 function getStatusClass(status) {
-  if (status === 'connected' || status === 'configured') {
+  if (status === 'connected' || status === 'configured' || status === 'running') {
     return 'status-success';
   } else if (status === 'error' || status === 'disconnected') {
     return 'status-error';
