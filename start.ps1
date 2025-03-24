@@ -136,5 +136,5 @@ Write-Host "System statistics: http://localhost:8000/statistics" -ForegroundColo
 Write-Host "Weaviate console: http://localhost:8080" -ForegroundColor Cyan
 Write-Host "Processor logs: docker-compose logs -f processor" -ForegroundColor Cyan
 Write-Host "Vue.js logs: docker-compose logs -f vue-frontend" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Cyan
+# Write-Host ""
+# Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Cyan
