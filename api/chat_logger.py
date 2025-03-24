@@ -103,6 +103,7 @@ class ChatLogger:
         self.retention_days = int(os.getenv("LOG_RETENTION_DAYS", str(self.DEFAULT_RETENTION_DAYS)))
         self.buffer_size = buffer_size
         self.log_buffer: List[str] = []
+        self.feedback_buffer: List[str] = []
         
         if self.enabled:
             try:
@@ -282,32 +283,26 @@ class ChatLogger:
             current_date = datetime.now().strftime('%Y%m%d')
             feedback_file = self.log_dir / f"feedback_log_{current_date}.jsonl"
             
-            # Write to feedback-specific log file
-            try:
-                # Ensure log directory exists
-                self.log_dir.mkdir(exist_ok=True, parents=True)
-                
-                # Format as JSON line
-                log_line = json.dumps(feedback_entry.model_dump()) + "\n"
-                
-                # Append to feedback log file
-                with open(feedback_file, 'a', encoding='utf-8') as f:
-                    f.write(log_line)
-                
-                logger.info(f"Feedback logged: {rating} for request {original_request_id}")
-                return True
-                
-            except (IOError, PermissionError) as e:
-                logger.error(f"Error writing to feedback log file: {str(e)}")
-                return False
+            # Format as JSON line
+            log_line = json.dumps(feedback_entry.model_dump()) + "\n"
             
+            # Add to feedback buffer
+            self.feedback_buffer.append(log_line)
+            
+            # If buffer reaches threshold, flush it
+            if len(self.feedback_buffer) >= self.buffer_size:
+                self._flush_feedback_buffer()
+            
+            logger.info(f"Feedback queued: {rating} for request {original_request_id}")
+            return True
+                
         except ValueError as e:
             logger.error(f"Error creating feedback entry: {str(e)}")
             return False
         except Exception as e:
             logger.error(f"Unexpected error logging feedback: {str(e)}")
-            return False        
-
+            return False
+        
     def _anonymize_sources(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Anonymize potentially sensitive information in document sources.
@@ -410,6 +405,29 @@ class ChatLogger:
             self.log_buffer = []
         except Exception as e:
             logger.error(f"Error flushing log buffer: {str(e)}")
+
+    def _flush_feedback_buffer(self) -> None:
+        """Flush the current feedback buffer to the log file."""
+        if not self.feedback_buffer:
+            return
+            
+        try:
+            # Get current date to make sure we're writing to the right file
+            current_date = datetime.now().strftime('%Y%m%d')
+            feedback_file = self.log_dir / f"feedback_log_{current_date}.jsonl"
+            
+            # Ensure log directory exists
+            self.log_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Append buffered content to file
+            with open(feedback_file, 'a', encoding='utf-8') as f:
+                f.writelines(self.feedback_buffer)
+            
+            # Clear buffer after successful write
+            logger.info(f"Flushed {len(self.feedback_buffer)} feedback entries to disk")
+            self.feedback_buffer = []
+        except Exception as e:
+            logger.error(f"Error flushing feedback buffer: {str(e)}")
 
     def _rotate_logs(self) -> None:
         """
@@ -585,8 +603,11 @@ class ChatLogger:
         Flush any buffered logs and clean up resources.
         Should be called when shutting down the application.
         """
-        if self.enabled and self.log_buffer:
-            self._flush_buffer()
+        if self.enabled:
+            if self.log_buffer:
+                self._flush_buffer()
+            if self.feedback_buffer:
+                self._flush_feedback_buffer()
             logger.info("Chat logger closed, all logs flushed to disk")
 
     # Async compatibility methods for projects that want to use async
