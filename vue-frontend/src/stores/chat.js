@@ -76,15 +76,14 @@ export const useChatStore = defineStore('chat', {
     },
 
     async submitFeedback(feedbackParams) {
-      console.log('Submitting feedback: ', feedbackParams);
       try {
         // Create a feedback object that exactly matches what the API expects
         const feedbackData = {
-          request_id: feedbackParams.originalRequestId || Date.now().toString(),
+          request_id: Date.now().toString(), // A unique ID for this feedback submission
           message_id: feedbackParams.messageId,
           rating: feedbackParams.rating, // Must be "positive" or "negative"
           feedback_text: feedbackParams.feedbackText || null,
-          categories: feedbackParams.categories || [], // Optional categories if implemented
+          categories: [], // Optional categories if implemented
           timestamp: new Date().toISOString() // Must be ISO format
         };
     
@@ -93,13 +92,27 @@ export const useChatStore = defineStore('chat', {
         // Send the feedback to the API
         const response = await chatService.submitFeedback(feedbackData);
         console.log('Feedback submitted successfully:', response);
+        
+        // Store feedback with message
+        const messageIndex = this.messages.findIndex(msg => msg.id === feedbackParams.messageId);
+        if (messageIndex !== -1) {
+          // Update message with feedback
+          this.messages[messageIndex] = {
+            ...this.messages[messageIndex],
+            feedback: {
+              rating: feedbackParams.rating,
+              feedbackText: feedbackParams.feedbackText
+            }
+          };
+        }
+        
         return response;
       } catch (error) {
         console.error('Failed to submit feedback:', error);
         throw error;
       }
     },
-    
+        
     async checkSystemStatus() {
       try {
         // Use a simple GET request to the status endpoint

@@ -70,12 +70,17 @@ function formatCitation(source) {
     if (metadata.date) {
       citation += ` (${metadata.date})`;
     }
+
+    // Add section heading if available
+    if (source.heading) {
+      citation += `, Section: "${source.heading}"`;
+    }    
     
     // Add page if available
     if (source.page) {
       citation += `, Page ${source.page}`;
     }
-    
+
     return citation;
   }
   
@@ -133,6 +138,7 @@ function printChat() {
       const role = msg.role === 'user' ? 'You' : 'Assistant';
       let html = `<p><strong>${role}:</strong> ${msg.content}</p>`;
       
+      // Add sources if available
       if (msg.sources && msg.sources.length > 0) {
         html += '<p><strong>Sources:</strong></p><ul>';
         msg.sources.forEach(source => {
@@ -141,6 +147,19 @@ function printChat() {
         });
         html += '</ul>';
       }
+
+      // Add feedback if available (for assistant messages)
+      if (msg.role === 'assistant' && msg.feedback) {
+        const feedbackText = msg.feedback.rating === 'positive' ? 
+          '👍 Helpful' : '👎 Not Helpful';
+        
+        html += `<p><strong>Your feedback:</strong> ${feedbackText}`;
+        
+        if (msg.feedback.feedbackText) {
+          html += ` - "${msg.feedback.feedbackText}"`;
+        }
+        html += `</p>`;
+      }      
       
       return html + '<hr>';
     }).join('')}
