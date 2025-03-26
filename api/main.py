@@ -7,16 +7,21 @@ import logging
 import hashlib
 import pathlib
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import deque
 from functools import lru_cache
 from typing import Optional, Dict, List, Any, Union, Tuple, Set, Annotated
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from collections import defaultdict
+import bcrypt
+import secrets
 
 from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import APIKeyHeader
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+
 import weaviate
 from weaviate.config import AdditionalConfig, Timeout
 from weaviate.classes.config import Configure, DataType
@@ -46,6 +51,10 @@ class Settings:
     CACHE_EXPIRY_SECONDS = int(os.getenv("CACHE_EXPIRY_SECONDS", "3600"))  # 1 hour
     MAX_QUERY_LENGTH = 1000
     MIN_QUERY_LENGTH = 3
+    JWT_SECRET_KEY_FILE = os.getenv("JWT_SECRET_KEY_FILE", "/run/secrets/jwt_secret_key")
+    JWT_SECRET_KEY = None
+    JWT_ALGORITHM = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 30    
 
 settings = Settings()
 
@@ -70,6 +79,90 @@ ip_request_counters = defaultdict(list)
 
 # Initialize chat logger
 chat_logger = None
+
+# OAuth2 password bearer for token-based authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Load the secret from file
+if os.path.exists(settings.JWT_SECRET_KEY_FILE):
+    try:
+        with open(settings.JWT_SECRET_KEY_FILE, "r") as f:
+            settings.JWT_SECRET_KEY = f.read().strip()
+    except Exception as e:
+        logger.error(f"Error reading JWT secret key from file: {str(e)}")
+
+if not settings.JWT_SECRET_KEY:
+    # Fall back to a randomly generated key (not ideal but better than a fixed default)
+    logger.warning("JWT secret key not found, generating a random one (will change on restart)")
+    settings.JWT_SECRET_KEY = secrets.token_hex(32)
+
+# Helper functions
+def validate_user_input_content(v: str) -> str:
+    """
+    Validate that user input does not contain malicious patterns.
+    
+    Args:
+        v: The  string to validate
+        
+    Returns:
+        str: The validated string
+        
+    Raises:
+        ValueError: If the string contains dangerous patterns
+    """
+    # 1. Check for script injection patterns
+    dangerous_patterns = [
+        '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
+        'ondblclick=', 'onmouseover=', 'onmouseout=', 'onfocus=', 'onblur=',
+        'oninput=', 'onchange=', 'onsubmit=', 'onreset=', 'onselect=',
+        'onkeydown=', 'onkeypress=', 'onkeyup=', 'ondragenter=', 'ondragleave=',
+        'data:text/html', 'vbscript:', 'expression(', 'document.cookie',
+        'document.write', 'window.location', 'eval(', 'exec('
+    ]
+    
+    for pattern in dangerous_patterns:
+        if pattern.lower() in v.lower():
+            raise ValueError(f'Potentially unsafe input detected: {pattern}')
+    
+    # 2. Check for SQL injection patterns - Fixed regex
+    sql_patterns = [
+        'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'UNION',
+        'FROM', 'WHERE', '1=1', 'OR 1=1', 'OR TRUE', '--'
+    ]
+    
+    # Count SQL keywords manually to avoid regex issues
+    sql_count = 0
+    for pattern in sql_patterns:
+        # Check for whole words only
+        if re.search(r'\b' + re.escape(pattern) + r'\b', v.upper()):
+            sql_count += 1
+    
+    # Allow a few keywords as they might be in natural language
+    if sql_count >= 3:
+        raise ValueError('Potential SQL injection pattern detected')
+    
+    # 3. Check for command injection patterns
+    cmd_patterns = [
+        ';', '&&', '||', '`', '$(',  # Command chaining in bash/shell
+        '| ', '>>', '>', '<', 'ping ', 'wget ', 'curl ', 
+        'chmod ', 'rm -', 'sudo ', '/etc/', '/bin/'
+    ]
+    
+    for pattern in cmd_patterns:
+        if pattern in v:
+            raise ValueError(f'Potential command injection pattern detected: {pattern}')
+    
+    # 4. Check for excessive special characters (might indicate an attack)
+    special_char_count = sum(1 for char in v if char in '!@#$%^&*()+={}[]|\\:;"\'<>?/~`')
+    if special_char_count > len(v) * 0.3:  # If more than 30% are special characters
+        raise ValueError('Too many special characters in input')
+        
+    # 5. Check for extremely repetitive patterns (DoS attempts)
+    if re.search(r'(.)\1{20,}', v):  # Same character repeated 20+ times
+        raise ValueError('Input contains excessive repetition')
+        
+    return v
+
 
 # Models
 class Query(BaseModel):
@@ -96,59 +189,9 @@ class Query(BaseModel):
         Raises:
             ValueError: If the question contains dangerous patterns
         """
-        # 1. Check for script injection patterns
-        dangerous_patterns = [
-            '<script>', 'javascript:', 'onload=', 'onerror=', 'onclick=',
-            'ondblclick=', 'onmouseover=', 'onmouseout=', 'onfocus=', 'onblur=',
-            'oninput=', 'onchange=', 'onsubmit=', 'onreset=', 'onselect=',
-            'onkeydown=', 'onkeypress=', 'onkeyup=', 'ondragenter=', 'ondragleave=',
-            'data:text/html', 'vbscript:', 'expression(', 'document.cookie',
-            'document.write', 'window.location', 'eval(', 'exec('
-        ]
-        
-        for pattern in dangerous_patterns:
-            if pattern.lower() in v.lower():
-                raise ValueError(f'Potentially unsafe input detected: {pattern}')
-        
-        # 2. Check for SQL injection patterns - Fixed regex
-        sql_patterns = [
-            'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'DROP', 'UNION',
-            'FROM', 'WHERE', '1=1', 'OR 1=1', 'OR TRUE', '--'
-        ]
-        
-        # Count SQL keywords manually to avoid regex issues
-        sql_count = 0
-        for pattern in sql_patterns:
-            # Check for whole words only
-            if re.search(r'\b' + re.escape(pattern) + r'\b', v.upper()):
-                sql_count += 1
-        
-        # Allow a few keywords as they might be in natural language
-        if sql_count >= 3:
-            raise ValueError('Potential SQL injection pattern detected')
-        
-        # 3. Check for command injection patterns
-        cmd_patterns = [
-            ';', '&&', '||', '`', '$(',  # Command chaining in bash/shell
-            '| ', '>>', '>', '<', 'ping ', 'wget ', 'curl ', 
-            'chmod ', 'rm -', 'sudo ', '/etc/', '/bin/'
-        ]
-        
-        for pattern in cmd_patterns:
-            if pattern in v:
-                raise ValueError(f'Potential command injection pattern detected: {pattern}')
-        
-        # 4. Check for excessive special characters (might indicate an attack)
-        special_char_count = sum(1 for char in v if char in '!@#$%^&*()+={}[]|\\:;"\'<>?/~`')
-        if special_char_count > len(v) * 0.3:  # If more than 30% are special characters
-            raise ValueError('Too many special characters in input')
-            
-        # 5. Check for extremely repetitive patterns (DoS attempts)
-        if re.search(r'(.)\1{20,}', v):  # Same character repeated 20+ times
-            raise ValueError('Input contains excessive repetition')
-            
+        validate_user_input_content(v)
         return v
-
+    
     @field_validator('question')
     @classmethod
     def normalize_question(cls, v: str) -> str:
@@ -247,27 +290,45 @@ class FeedbackModel(BaseModel):
     message_id: str
     rating: str = Field(..., description="positive or negative")
     feedback_text: Optional[str] = None
-    categories: Optional[List[str]] = None
+    categories: Optional[List[str]] = []  # Change None to [] as default
     timestamp: str
     
     @field_validator('rating')
     @classmethod
     def validate_rating(cls, v: str) -> str:
         """Validate rating is positive or negative."""
-        if v not in ["positive", "negative"]:
+        if v.lower() not in ["positive", "negative"]:
             raise ValueError('Rating must be "positive" or "negative"')
+        return v.lower()  # Normalize to lowercase
+        
+    @field_validator('message_id')
+    @classmethod
+    def validate_message_id(cls, v: str) -> str:
+        """Validate message_id is not empty."""
+        if not v or not v.strip():
+            raise ValueError("message_id cannot be empty")
+        validate_user_input_content(v)
         return v
     
-    @field_validator('timestamp')
-    @classmethod
-    def validate_timestamp(cls, v: str) -> str:
-        """Validate timestamp is in ISO format."""
-        try:
-            datetime.fromisoformat(v)
-            return v
-        except ValueError:
-            raise ValueError("Timestamp must be in ISO format")
+class User(BaseModel):
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = None
 
+class UserInDB(User):
+    hashed_password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 # Error classes
 class MistralAPIError(Exception):
@@ -299,6 +360,82 @@ class WeaviateError(Exception):
         self.error_type = error_type
         self.is_transient = is_transient
         super().__init__(self.message)
+
+# Authentication helper functions
+def load_users_from_json():
+    users_file_path = 'users.json'
+    try:
+        if os.path.exists(users_file_path):
+            with open(users_file_path, 'r') as f:
+                return json.load(f)
+        logger.warning(f"Users file not found at {users_file_path}")
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading users from JSON: {str(e)}")
+        return {}
+
+def get_users_db():
+    return load_users_from_json()
+
+def verify_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
+def get_user(db, username: str):
+    # Load fresh user data each time to catch updates
+    users_db = get_users_db()
+    if username in users_db:
+        user_dict = users_db[username]
+        return UserInDB(**user_dict)
+    return None
+
+def authenticate_user(username: str, password: str):
+    user = get_user(None, username)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    
+    # Import JWT library only when needed
+    import jwt
+    
+    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    import jwt
+    from jwt.exceptions import PyJWTError
+    
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except PyJWTError:
+        raise credentials_exception
+    user = get_user(None, username=token_data.username)  # Remove the first parameter
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_active_user(current_user: User = Depends(get_current_user)):
+    if current_user.disabled:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user        
 
 # Utility functions
 def check_token_budget(estimated_tokens: int) -> bool:
@@ -498,12 +635,12 @@ def expand_question_references(question: str, history: List[Dict[str, Any]]) -> 
     # Get key topics from recent conversation
     topics = []
     
-    # Extract last 2 exchanges at most
+    # Extract last 2 exchanges at most - FIX: Define recent_turns first
     recent_turns = min(2, len(history) // 2)
-    recent_history = history[-recent_turns*2:] if recent_history > 0 else history
+    history_subset = history[-recent_turns*2:] if recent_turns > 0 else history
     
     # Simple keyword extraction (could be enhanced with NLP)
-    for msg in recent_history:
+    for msg in history_subset:
         if msg.get("role") == "user":
             # Extract nouns from user questions as potential topics
             words = msg.get("content", "").split()
@@ -772,6 +909,15 @@ app = FastAPI(
     description="An EU-compliant RAG implementation using Weaviate and Mistral AI",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# Register Vue dev server
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # API Key security scheme
@@ -1334,7 +1480,7 @@ async def privacy_notice():
     except Exception as e:
         logger.error(f"Error serving privacy notice: {str(e)}")
         return "<h1>Privacy Notice</h1><p>Error loading privacy notice.</p>"
-    
+        
 @app.post("/feedback")
 async def submit_feedback(
     feedback: FeedbackModel,
@@ -1357,6 +1503,7 @@ async def submit_feedback(
     request_id = str(uuid.uuid4())[:8]  # Generate an ID for this feedback submission
     
     logger.info(f"[{request_id}] Received feedback for request {feedback.request_id}")
+    logger.info(f"[{request_id}] Feedback details: {feedback.model_dump()}")
     
     # Process and store feedback
     if chat_logger and chat_logger.enabled:
@@ -1393,6 +1540,75 @@ async def submit_feedback(
             "status": "success",
             "message": "Feedback received but logging is disabled"
         }
+    
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/login")
+async def login(login_request: LoginRequest):
+    user = authenticate_user(login_request.username, login_request.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password"
+        )
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "username": user.username,
+        "full_name": user.full_name
+    }
+
+@app.post("/admin/flush-logs")
+async def flush_logs(api_key: str = Depends(get_api_key)):
+    """
+    Manually flush all log buffers to disk.
+    
+    Args:
+        api_key: API key for authentication
+    
+    Returns:
+        dict: Status message
+    """
+    try:
+        if chat_logger and chat_logger.enabled:
+            # Flush regular chat logs
+            if hasattr(chat_logger, "_flush_buffer"):
+                chat_logger._flush_buffer()
+                
+            # Flush feedback logs if that method exists
+            if hasattr(chat_logger, "_flush_feedback_buffer"):
+                chat_logger._flush_feedback_buffer()
+                
+            return {"status": "success", "message": "All log buffers flushed to disk"}
+        else:
+            return {"status": "warning", "message": "Chat logging is not enabled"}
+    except Exception as e:
+        logger.error(f"Error flushing logs: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error flushing logs: {str(e)}"
+        )
+
+@app.get("/users/me/", response_model=User)
+async def read_users_me(current_user: User = Depends(get_current_active_user)):
+    return current_user    
     
 # 1. First registered (executed last): Add security headers
 @app.middleware("http")

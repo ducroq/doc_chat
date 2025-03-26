@@ -20,8 +20,7 @@ The system is designed as a modular, containerized application that allows users
 | **LLM Provider** | Mistral AI | Generates responses based on retrieved context |
 | **Backend API** | FastAPI | Handles requests, orchestrates RAG process |
 | **Document Processor** | Python/watchdog | Monitors and processes new text documents |
-| **Prototype Frontend** | Streamlit | Provides user chat interface |
-| **Production Frontend** | HTML/JS + Nginx | Lightweight production web interface |
+| **Frontend** | Vue.js + Nginx | Web interface with responsive design |
 | **Containerization** | Docker | Packages all components for deployment |
 | **Production Hosting** | Hetzner | EU-based cloud provider for production |
 
@@ -53,8 +52,7 @@ The system is designed as a modular, containerized application that allows users
 
 ### Web Interface
 
-- **Prototype**: Streamlit-based interface for development and testing
-- **Production**: Nginx serving static HTML/JS application
+- **Frontend** Vue.js + Nginx Web interface with responsive design
 - **Features**: Chat interface, source citations, system status information
 
 ### Chat Logger
@@ -112,7 +110,14 @@ The system includes bibliographic metadata support for academic and research doc
 
 ## Deployment Architecture
 
-The system is deployed as Docker containers, making it portable across environments. For production, it's hosted on Hetzner (German cloud provider) to maintain EU data sovereignty.
+The system is deployed as Docker containers with Nginx serving as the entry point:
+- Nginx serves the compiled Vue.js SPA static files
+- Proxies API requests to the backend FastAPI service
+- Adds security headers to all responses
+- Provides client-side routing support for the SPA
+- Handles API authentication forwarding
+
+For production, it's hosted on Hetzner (German cloud provider) to maintain EU data sovereignty.
 
 ![Architecture Diagram](diagrams/architecture-diagram.svg)
 
@@ -121,6 +126,13 @@ The system is deployed as Docker containers, making it portable across environme
 For developers who need to understand the code organization, the system follows this class structure:
 
 [Reference to detailed class diagram in diagrams folder]
+
+## Network Flow
+
+1. **User Request** → **Nginx** (port 80) → Static files or API proxy
+2. For API requests: **Nginx** → **FastAPI** (internal port 8000)
+3. For data queries: **FastAPI** → **Weaviate** (internal port 8080)
+4. For LLM generation: **FastAPI** → **Mistral API** (external HTTPS)
 
 ## Future Architecture Considerations
 

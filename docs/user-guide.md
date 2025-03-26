@@ -10,10 +10,29 @@ The Document Chat system allows you to ask questions about Markdown documents in
 
 Access the web interface through your browser:
 
-- **Development environment**: http://localhost:8501
-- **Production environment**: http://your-domain.com (or IP address)
+- **URL**: http://localhost (or http://your-domain.com in production)
 
-The interface has a clean, chat-based design that's intuitive to use.
+The interface has a clean, chat-based design powered by Vue.js and served through Nginx.
+
+## Authentication
+
+The system uses username/password authentication to protect access:
+
+1. You will be presented with a login screen when accessing the web interface
+2. Enter the credentials provided by your administrator
+3. Once authenticated, you'll remain logged in until your session expires (30 minutes by default)
+4. You can log out at any time using the Logout button in the sidebar
+
+### Session Management
+
+- Sessions automatically expire after 30 minutes of inactivity
+- Refreshing the page does not log you out as long as your session is valid
+- For security, always log out when you're finished using the system
+
+If you're having trouble logging in:
+- Make sure you're using the correct username and password
+- Check with your administrator to ensure your account is enabled
+- Clear your browser cache if you continue to experience issues
 
 ## Asking Questions
 

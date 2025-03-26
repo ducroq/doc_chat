@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Document base -->
+  <path d="M14,4c-1.1,0-2,0.9-2,2v52c0,1.1,0.9,2,2,2h36c1.1,0,2-0.9,2-2V20L38,4H14z" fill="#f5f7fa" stroke="#4a6cf7" stroke-width="2.5"/>
+  
+  <!-- Document fold -->
+  <path d="M38,4v14c0,1.1,0.9,2,2,2h12" fill="none" stroke="#4a6cf7" stroke-width="2.5"/>
+  
+  <!-- Document lines -->
+  <line x1="20" y1="28" x2="44" y2="28" stroke="#bbb" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="20" y1="36" x2="44" y2="36" stroke="#bbb" stroke-width="2.5" stroke-linecap="round"/>
+  
+  <!-- Chat bubble -->
+  <path d="M48,47c0,1.1-0.9,2-2,2H26.8L20,55v-6h-4c-1.1,0-2-0.9-2-2V33c0-1.1,0.9-2,2-2h30c1.1,0,2,0.9,2,2V47z" fill="#4a6cf7" stroke="#4a6cf7" stroke-width="0.5"/>
+  
+  <!-- EU stars (simplified) -->
+  <g fill="#FFD700" transform="scale(0.12) translate(240, 295)">
+    <circle cx="30" cy="30" r="6"/>
+    <circle cx="55" cy="30" r="6"/>
+    <circle cx="80" cy="30" r="6"/>
+  </g>
+</svg>

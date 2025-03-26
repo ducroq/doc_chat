@@ -9,7 +9,7 @@ The system follows a modular architecture with several key components:
 1. **Document Processor**: Monitors a folder for text files, chunks text, and indexes in Weaviate
 2. **Vector Database**: Weaviate stores document chunks with vector embeddings
 3. **API Service**: FastAPI-based service that handles queries and orchestrates the RAG workflow
-4. **Web Interface**: Streamlit prototype and production web frontend
+4. **Web Interface**: Vue.js frontend served by Nginx
 5. **LLM Integration**: Mistral AI provides language model capabilities
 
 For a visual representation, refer to the architecture diagrams in the `docs/diagrams` directory.
@@ -18,6 +18,7 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
 
 ### Prerequisites
 
+- Node.js 18+ (for Vue.js development)
 - Python 3.9+
 - Docker and Docker Compose
 - Git
@@ -40,7 +41,11 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
    # Install dependencies for local development
    pip install -r api/requirements.txt
    pip install -r processor/requirements.txt
-   pip install -r web-prototype/requirements.txt
+   
+   # Install frontend dependencies
+   cd vue-frontend
+   npm install
+   cd ..
    ```
 
 3. **Configure environment variables**:
@@ -69,8 +74,8 @@ For improved security, use Docker Secrets instead of environment variables for s
    ```bash
    mkdir -p ./secrets
    echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
-   chmod 600 ./secrets/mistral_api_key.txt   
-
+   chmod 600 ./secrets/mistral_api_key.txt
+   ```
 
 ### Direct Component Development
 
@@ -88,11 +93,12 @@ cd processor
 python processor.py
 ```
 
-#### Web Prototype
+#### Vue.js Frontend
 ```bash
-cd web-prototype
-streamlit run app.py
+cd vue-frontend
+npm run dev
 ```
+This starts a development server at http://localhost:5173 with hot reloading.
 
 ## Key Components and Code Structure
 
@@ -197,14 +203,130 @@ When converting PDFs or other documents to text files for processing:
 
 4. Create corresponding metadata files as needed
 
+## Frontend Development
+
+### Vue.js Frontend Architecture
+
+The frontend is built with Vue.js 3 and follows a component-based architecture:
+- `src/components/`: Reusable UI components
+- `src/views/`: Page components corresponding to routes
+- `src/services/`: API communication and authentication
+- `src/stores/`: Pinia state management stores
+
+### Build and Deployment
+
+When building the Docker image:
+1. Vue.js code is compiled to static assets (HTML, CSS, JS)
+2. Nginx serves these static files and acts as a reverse proxy for API requests
+3. The entrypoint.sh script generates the Nginx configuration with proper API settings
+
+### Local Development
+
+For local frontend development without Docker:
+```bash
+cd vue-frontend
+npm install
+npm run dev
+```
+This starts a development server at http://localhost:5173 with hot reloading.
+
+### Production Build
+
+The production deployment uses Nginx to serve the compiled Vue.js application:
+
+- Static assets are served directly by Nginx
+- API requests are proxied to the FastAPI backend
+- Nginx adds security headers and handles SPA routing
+
 ## Security Features
 
-### Authentication and Authorization
+### Authentication System
 
+The system implements a JWT-based authentication flow for both the API and web interfaces.
 The system includes authentication for the web interface:
 - Password-based authentication using bcrypt for secure password hashing
-- Login session management using Streamlit session state
+- JWT token storage in browser localStorage
 - API key-based authorization for API endpoints
+
+#### Authentication Flow
+
+1. User submits credentials via login endpoint
+2. Server validates credentials against `users.json`
+3. If valid, server issues a JWT token
+4. Frontend stores token in localStorage
+5. Token is included in Authorization header for subsequent requests
+6. Protected endpoints validate the token
+
+#### API Implementation
+
+The authentication system is implemented in `api/main.py` with these key components:
+
+```python
+# User model definitions
+class User(BaseModel):
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = None
+
+class UserInDB(User):
+    hashed_password: str
+
+# Authentication verification
+def verify_password(plain_password, hashed_password):
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
+# User retrieval
+def get_user(username: str):
+    users_db = load_users_from_json()
+    if username in users_db:
+        user_dict = users_db[username]
+        return UserInDB(**user_dict)
+    return None
+
+# Authentication dependency
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    # Token validation logic
+    # ...
+    return user
+
+# Protected endpoint example
+@app.get("/protected")
+async def protected_route(current_user: User = Depends(get_current_active_user)):
+    return {"user": current_user}
+```
+
+#### User Management
+
+Users are stored in `users.json` and managed via the `manage_users.py` script. To add authentication to new endpoints, use the `get_current_active_user` dependency:
+
+```python
+@app.post("/new-endpoint")
+async def new_endpoint(data: SomeModel, current_user: User = Depends(get_current_active_user)):
+    # This endpoint is now protected by authentication
+    return {"result": "data", "user": current_user.username}
+```
+
+#### Frontend Implementation
+
+The Vue.js frontend handles authentication using:
+
+1. `authService.js` - Authentication logic and token management
+2. Router guards - Redirects to login page for protected routes
+3. Axios interceptors - Automatically adds Authorization header to requests
+
+#### Testing Authentication
+
+To test the authentication system:
+
+```bash
+# Create a test user
+python manage_users.py create testuser --generate-password
+
+# Make an authenticated request
+TOKEN=$(curl -s -X POST http://localhost:8000/login -H "Content-Type: application/json" -d '{"username":"testuser","password":"generated_password"}' | jq -r '.access_token')
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/users/me/
+```
 
 ### Request Validation
 
@@ -351,7 +473,7 @@ services:
     networks:
       - frontend
       - backend
-  web-prototype:
+  vue-frontend:
     networks:
       - frontend
 ```
@@ -378,10 +500,22 @@ To add support for new document types (PDF, DOCX, etc.):
 
 ### Modifying the Web Interface
 
-The web interface uses Streamlit for prototyping:
+To modify the Vue.js frontend:
 
-1. Edit `web-prototype/app.py` to modify the prototype interface
-2. For production changes, update the files in `web-production/`
+1. Navigate to the components directory to update UI elements:
+   ```bash
+   cd vue-frontend/src/components/
+   ```
+
+2. Edit view components in the views directory:
+   ```bash
+   cd vue-frontend/src/views/
+   ```
+
+3. Update services for API communication:
+   ```bash
+   cd vue-frontend/src/services/
+   ```
 
 ### Extending API Capabilities
 
@@ -437,7 +571,7 @@ The system includes a privacy-focused chat logging component for research. A com
 
 The feedback system consists of:
 
-1. **Frontend UI components** in the web interface
+1. **Frontend UI components** in the Vue.js interface
 2. **API endpoints** for submitting feedback
 3. **Storage mechanisms** for logging feedback
 4. **Privacy-compliant data handling** that respects GDPR requirements
