@@ -134,6 +134,17 @@ For developers who need to understand the code organization, the system follows 
 3. For data queries: **FastAPI** → **Weaviate** (internal port 8080)
 4. For LLM generation: **FastAPI** → **Mistral API** (external HTTPS)
 
+## Platform Considerations
+
+### Linux
+- Uses systemd for managing Docker service
+- Docker socket permissions require special attention
+- Start/stop scripts handle service dependencies and order
+
+### Windows
+- Uses PowerShell for automation scripts
+- Docker Desktop must be running before starting services
+
 ## Future Architecture Considerations
 
 - Scaling vector database for larger document collections

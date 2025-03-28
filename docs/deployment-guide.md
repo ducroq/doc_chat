@@ -84,6 +84,56 @@ This architecture provides excellent performance, security, and scalability whil
 6. **Add documents**:
    Place .txt files in the `data/` directory.
 
+
+## Linux Server Deployment
+
+### Prerequisites
+
+- Linux server (Ubuntu 22.04 LTS recommended)
+- Docker and Docker Compose installed
+- At least 4GB of RAM
+- Mistral AI API key
+
+### Docker Setup
+
+When deploying on Linux, you may need to configure Docker permissions:
+
+```bash
+# Add your user to the docker group (recommended)
+sudo usermod -aG docker $USER
+# Log out and log back in, or run:
+newgrp docker
+```
+
+### Deployment Steps
+
+1. Clone the repository:
+
+```bash
+# If using SSH (recommended)
+git clone git@github.com:ducroq/doc-chat.git
+# Or using HTTPS with a personal access token
+git clone https://TOKEN@github.com/ducroq/doc-chat.git
+```
+
+2. Use the start and stop scripts:
+
+```bash
+# Make scripts executable
+chmod +x start.sh stop.sh
+
+# Start the system
+./start.sh
+
+# Stop the system when needed
+./stop.sh
+```
+
+3. Troubleshooting common issues:
+- If Docker permission errors occur, ensure your user is in the docker group
+- If build errors mention COPY commands, ensure destination paths end with '/'
+- For networking issues, check if required ports are open and not blocked by firewalls
+
 ## Production Deployment (E.g. Hetzner)
 
 ### Prerequisites

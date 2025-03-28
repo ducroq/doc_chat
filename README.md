@@ -61,14 +61,18 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
    ```
 
 4. Start the system:
+
+   - On Windows
    ```bash
-   # On Windows
    .\start.ps1
-   
-   # On Linux/macOS
-   docker-compose up -d
    ```
 
+   - On Linux
+   ```bash
+   chmod +x start.sh stop.sh
+   ./start.sh
+   ```
+   
 5. Access the interfaces:
    - Web interface: http://localhost (served by Nginx)
    - API documentation: http://localhost:8000/docs

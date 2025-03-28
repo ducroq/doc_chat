@@ -621,6 +621,25 @@ Build specific component:
 docker-compose build api
 ```
 
+### Linux Deployment
+
+For Linux deployments, use the provided scripts:
+
+```bash
+# Start all services in the correct order
+./start.sh
+
+# Stop all services
+./stop.sh
+```
+
+These scripts handle:
+- Checking Docker availability
+- Starting services in the proper sequence
+- Waiting for dependencies to be ready
+- Verifying system connectivity
+
+
 ### Production Deployment
 
 See `docs/deployment-guide.md` for complete production deployment instructions.
