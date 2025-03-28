@@ -181,4 +181,4 @@ chat_data/
 # Keys
 secrets/
 web-prototype/.streamlit/secrets.toml
-tests/Vaccaro_2024.pdf
+users.json
