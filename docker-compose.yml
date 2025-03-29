@@ -23,7 +23,7 @@ services:
       - --port
       - '8080'
       - --scheme
-      - http      
+      - http
     environment:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
@@ -35,7 +35,7 @@ services:
     volumes:
       - weaviate_data:/var/lib/weaviate
     restart: on-failure
-   
+
   t2v-transformers:
     image: semitechnologies/transformers-inference:sentence-transformers-all-MiniLM-L6-v2
     networks:
@@ -46,10 +46,10 @@ services:
 
   processor:
     networks:
-      - backend  
+      - backend
     build: ./processor
     volumes:
-      - ./data:/data
+      - data_volume:/data
     environment:
       - WEAVIATE_URL=http://weaviate:8080
       - DATA_FOLDER=/data
@@ -95,11 +95,11 @@ services:
       - no-new-privileges:true
 
   vue-frontend:
-    build: 
+    build:
       context: ./vue-frontend
       dockerfile: Dockerfile
     ports:
-      - "80:80"
+      - "8081:80"
     networks:
       - frontend
     secrets:
@@ -116,3 +116,5 @@ services:
 
 volumes:
   weaviate_data:
+  data_volume:
+
