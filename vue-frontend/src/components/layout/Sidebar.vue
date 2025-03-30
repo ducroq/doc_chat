@@ -65,17 +65,42 @@ const loggingEnabled = ref(false);
 const showPrivacyModal = ref(false);
 
 onMounted(async () => {
-  try {
-    // Try to check system status but don't break if it fails
-    const status = await chatStore.checkSystemStatus();
-    systemStatus.value = status || systemStatus.value;
-
-    if (window.APP_CONFIG && typeof window.APP_CONFIG.enableChatLogging !== 'undefined') {     
-      // Force the value to be a boolean
+  // Set up config check
+  let configCheckInterval = null;
+  
+  function checkConfig() {
+    if (window.APP_CONFIG && typeof window.APP_CONFIG.enableChatLogging !== 'undefined') {
+      console.log("Found APP_CONFIG", window.APP_CONFIG);
       loggingEnabled.value = window.APP_CONFIG.enableChatLogging === true || 
                             window.APP_CONFIG.enableChatLogging === "true";
       
-      console.log("Final loggingEnabled value:", loggingEnabled.value);
+      // Clear interval once config is found
+      if (configCheckInterval) {
+        clearInterval(configCheckInterval);
+        configCheckInterval = null;
+      }
+    }
+  }
+  
+  // Check immediately
+  checkConfig();
+  
+  // Set up interval to check periodically
+  configCheckInterval = setInterval(checkConfig, 100);
+  
+  // Clean up after 2 seconds max
+  setTimeout(() => {
+    if (configCheckInterval) {
+      clearInterval(configCheckInterval);
+      configCheckInterval = null;
+    }
+  }, 2000);
+  
+  // Fetch system status (independent of config check)
+  try {
+    const status = await chatStore.checkSystemStatus();
+    if (status) {
+      systemStatus.value = status;
     }
   } catch (error) {
     console.warn('Could not fetch system status:', error);

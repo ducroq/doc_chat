@@ -18,13 +18,6 @@ if [ "${ENABLE_CHAT_LOGGING}" = "true" ]; then
   LOGGING_ENABLED="true"
 fi
 
-# Generate config file
-echo "window.APP_CONFIG = {
-  apiUrl: '${API_URL}',
-  apiKey: '${API_KEY}',
-  enableChatLogging: ${LOGGING_ENABLED}
-};" > "/usr/share/nginx/html/config.js"
-
 # Create a custom Nginx configuration file with the API key
 cat > /etc/nginx/conf.d/default.conf << EOF
 server {
@@ -55,7 +48,9 @@ server {
 }
 EOF
 
-echo "Generated config.js with environment variables"
+CONFIG_SCRIPT="<script>window.APP_CONFIG = { apiUrl: '${API_URL}', apiKey: '${API_KEY}', enableChatLogging: ${LOGGING_ENABLED} };</script>"
+sed -i "s|</head>|${CONFIG_SCRIPT}</head>|" /usr/share/nginx/html/index.html
+
 echo "Generated custom Nginx configuration with API key"
 
 # Start nginx
