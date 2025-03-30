@@ -8,8 +8,6 @@ import glob
 import asyncio
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 from pathlib import Path
 from typing import (
     Optional, List, Dict, Any, Union, Tuple, Set, 
@@ -833,7 +831,6 @@ class DocumentStorage:
             return -1
 
 # ------------ Processing Tracker Class ------------
-
 class ProcessingTracker:
     """
     Tracks files that have been processed to avoid redundant processing.
@@ -1367,324 +1364,105 @@ class DocumentProcessor:
             "processing_time": 0
         }
 
-# ------------ File Watcher Class ------------
-
-class TextFileHandler(FileSystemEventHandler):
-    """
-    Watchdog event handler for monitoring file changes.
-    
-    Attributes:
-        processor: DocumentProcessor instance to process files
-        tracker: Optional ProcessingTracker to track processed files
-        stats: Statistics about processing events
-    """
-    
-    def __init__(
-        self, 
-        document_processor: DocumentProcessor, 
-        tracker: Optional[ProcessingTracker] = None
-    ):
+    async def process_all_documents(self, tracker, data_folder):
         """
-        Initialize a file system event handler for Markdown files.
+        Process all documents in the data folder.
+        Compare current files to tracked files and handle additions, modifications, and deletions.
         
         Args:
-            document_processor: DocumentProcessor instance to process files
-            tracker: Optional ProcessingTracker to track processed files
+            tracker: ProcessingTracker instance
+            data_folder: Path to the folder containing documents
+            
+        Returns:
+            dict: Statistics about processing
         """
-        logger.info("Initializing TextFileHandler for watching Markdown files")
-        self.processor = document_processor
-        self.tracker = tracker
-        self.stats = {
-            "created": 0,
-            "modified": 0,
-            "deleted": 0,
-            "processed": 0,
-            "failed": 0
+        stats = {
+            "total_files": 0,
+            "new_files": 0,
+            "modified_files": 0,
+            "deleted_files": 0,
+            "unchanged_files": 0,
+            "processed_success": 0,
+            "processed_failed": 0
         }
-        self.start_time = time.time()
-        logger.info(f"TextFileHandler initialized with {'tracking enabled' if tracker else 'no tracking'}")
-
-    def on_created(self, event):
-        """
-        Handle file creation events.
         
-        Args:
-            event: The file system event
-        """
-        # Check if this is a file we should process
-        if event.is_directory:
-            return
-            
-        file_path = event.src_path
-        _, file_ext = os.path.splitext(file_path)
+        # Get all current files in the data folder
+        current_files = set()
+        for ext in config.FILE_EXTENSIONS:
+            pattern = os.path.join(data_folder, f"*{ext}")
+            current_files.update(os.path.abspath(f) for f in glob.glob(pattern))
         
-        if file_ext not in config.FILE_EXTENSIONS:
-            return
+        stats["total_files"] = len(current_files)
+        logger.info(f"Found {len(current_files)} files in {data_folder}")
         
-        event_time = time.time()
-        try:
-            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else "unknown"
-            logger.info(f"New file detected: {file_path} (size: {file_size} bytes)")
-            
-            # Process the new file
-            self.stats["created"] += 1
-            
-            # Use the event loop to run the async process_file method
-            # Instead of asyncio.run which can't be nested
-            loop = asyncio.get_event_loop()
-            if not loop.is_running():
-                result = loop.run_until_complete(self.processor.process_file(file_path))
+        # Get previously tracked files
+        tracked_files = set()
+        for filename in tracker.get_all_tracked_files():
+            full_path = os.path.join(data_folder, filename)
+            if os.path.isabs(full_path):
+                tracked_files.add(full_path)
             else:
-                # Create a Future to get the result
-                future = asyncio.run_coroutine_threadsafe(
-                    self.processor.process_file(file_path), 
-                    loop
-                )
-                result = future.result()
+                tracked_files.add(os.path.abspath(full_path))
+        
+        logger.info(f"Found {len(tracked_files)} files in tracking data")
+        
+        # Process new or modified files
+        for file_path in current_files:
+            file_name = os.path.basename(file_path)
             
-            # Update tracker if processing was successful
-            if result["success"]:
-                self.stats["processed"] += 1
-                if self.tracker:
-                    self.tracker.mark_as_processed(file_path)
+            if file_path not in tracked_files:
+                logger.info(f"New file detected: {file_path}")
+                stats["new_files"] += 1
+            elif tracker.should_process_file(file_path):
+                logger.info(f"Modified file detected: {file_path}")
+                stats["modified_files"] += 1
             else:
-                self.stats["failed"] += 1
+                logger.info(f"Unchanged file: {file_path}")
+                stats["unchanged_files"] += 1
+                continue
+            
+            # Process the file
+            try:
+                result = await self.process_file(file_path)
                 
-            process_time = time.time() - event_time
-            logger.info(f"Creation event processed in {process_time:.2f}s (success: {result['success']})")
-        except Exception as e:
-            self.stats["failed"] += 1
-            logger.error(f"Error handling file creation event: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
+                if result["success"]:
+                    stats["processed_success"] += 1
+                    tracker.mark_as_processed(file_path)
+                    logger.info(f"Successfully processed: {file_path}")
+                else:
+                    stats["processed_failed"] += 1
+                    logger.error(f"Failed to process {file_path}: {result['message']}")
+            except Exception as e:
+                stats["processed_failed"] += 1
+                logger.error(f"Error processing {file_path}: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
         
-        # Log overall statistics periodically
-        self._log_stats()
-
-    def on_modified(self, event):
-        """
-        Handle file modification events.
-        
-        Args:
-            event: The file system event
-        """
-        # Check if this is a file we should process
-        if event.is_directory:
-            return
-            
-        file_path = event.src_path
-        _, file_ext = os.path.splitext(file_path)
-        
-        if file_ext not in config.FILE_EXTENSIONS:
-            return
-        
-        event_time = time.time()
-        try:
-            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else "unknown"
-            logger.info(f"File modified: {file_path} (size: {file_size} bytes)")
-            
-            # Process the modified file
-            self.stats["modified"] += 1
-            
-            # Use the event loop to run the async process_file method
-            loop = asyncio.get_event_loop()
-            if not loop.is_running():
-                result = loop.run_until_complete(self.processor.process_file(file_path))
-            else:
-                # Create a Future to get the result
-                future = asyncio.run_coroutine_threadsafe(
-                    self.processor.process_file(file_path), 
-                    loop
-                )
-                result = future.result()
-            
-            # Update tracker if processing was successful
-            if result["success"]:
-                self.stats["processed"] += 1
-                if self.tracker:
-                    self.tracker.mark_as_processed(file_path)
-            else:
-                self.stats["failed"] += 1
-                
-            process_time = time.time() - event_time
-            logger.info(f"Modification event processed in {process_time:.2f}s (success: {result['success']})")
-        except Exception as e:
-            self.stats["failed"] += 1
-            logger.error(f"Error handling file modification event: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-        
-        # Log overall statistics periodically
-        self._log_stats()
-
-    def on_deleted(self, event):
-        """
-        Handle file deletion events.
-        
-        Args:
-            event: The file system event
-        """
-        # Check if this is a file we should process
-        if event.is_directory:
-            return
-            
-        file_path = event.src_path
-        _, file_ext = os.path.splitext(file_path)
-        
-        if file_ext not in config.FILE_EXTENSIONS:
-            return
-        
-        event_time = time.time()
-        try:
-            logger.info(f"File deleted: {file_path}")
-            
-            # Get the filename without the path
-            filename = os.path.basename(file_path)
-            
-            # Delete the chunks from storage
-            self.stats["deleted"] += 1
-            
-            # Use the event loop to run the async delete_chunks method
-            loop = asyncio.get_event_loop()
-            if not loop.is_running():
-                loop.run_until_complete(self.processor.storage.delete_chunks(filename))
-            else:
-                # Create a Future for the deletion
-                future = asyncio.run_coroutine_threadsafe(
-                    self.processor.storage.delete_chunks(filename), 
-                    loop
-                )
-                future.result()
-            
-            # Update tracker if available
-            tracker_updated = False
-            if self.tracker:
-                tracker_updated = self.tracker.remove_file(filename)
-                
-            process_time = time.time() - event_time
-            logger.info(f"Deletion event processed in {process_time:.2f}s (tracker updated: {tracker_updated})")
-        except Exception as e:
-            logger.error(f"Error handling file deletion event: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-        
-        # Log overall statistics periodically
-        self._log_stats()
-    
-    async def process_existing_files(self, data_folder: str) -> ProcessingStats:
-        """
-        Process existing text files in the specified folder.
-        
-        Args:
-            data_folder: Path to the folder containing text files
-            
-        Returns:
-            ProcessingStats: Processing statistics
-        """
-        logger.info(f"Processing existing files in {data_folder}")
-        return await self.processor.process_directory(data_folder, self.tracker)
-    
-    def _log_stats(self):
-        """Log current statistics about file processing."""
-        current_time = time.time()
-        uptime = current_time - self.start_time
-        
-        # Log statistics every hour or after every 10 operations
-        total_ops = sum(self.stats.values())
-        if total_ops % 10 == 0 or (uptime // 3600) > ((uptime - 60) // 3600):
-            logger.info(f"TextFileHandler statistics - Uptime: {uptime//3600:.0f}h {(uptime%3600)//60:.0f}m {uptime%60:.0f}s")
-            logger.info(f"Events processed: created={self.stats['created']}, modified={self.stats['modified']}, " +
-                    f"deleted={self.stats['deleted']}, successful={self.stats['processed']}, failed={self.stats['failed']}")
-
-    def start_watching(
-        self, 
-        data_folder: str, 
-        process_existing: bool = True
-    ) -> Observer:
-        """
-        Start watching a folder for file changes.
-        
-        Args:
-            data_folder: Path to the folder to watch
-            process_existing: Whether to process existing files before watching
-            
-        Returns:
-            Observer: The started watchdog observer
-        """
-        watch_start = time.time()
-        logger.info(f"Starting to watch folder: {data_folder} (process existing: {process_existing})")
-        
-        # Process existing files if requested - but do it synchronously to avoid
-        # event loop complications
-        if process_existing:
-            # Find Markdown files in the directory
-            files = []
-            for ext in config.FILE_EXTENSIONS:
-                files.extend(glob.glob(os.path.join(data_folder, f"*{ext}")))
-            
-            processed = 0
-            skipped = 0
-            failed = 0
-            
-            logger.info(f"Found {len(files)} existing files to process")
-            
-            # Process each file one by one synchronously
-            for file_path in files:
-                if self.tracker and not self.tracker.should_process_file(file_path):
-                    logger.info(f"Skipping already processed file: {file_path}")
-                    skipped += 1
-                    continue
+        # Handle deleted files
+        for file_path in tracked_files:
+            if file_path not in current_files:
+                file_name = os.path.basename(file_path)
+                logger.info(f"Deleted file detected: {file_name}")
+                stats["deleted_files"] += 1
                 
                 try:
-                    # Use a separate event loop for each file to avoid nesting issues
-                    loop = asyncio.new_event_loop()
-                    result = loop.run_until_complete(self.processor.process_file(file_path))
-                    loop.close()
+                    # Delete chunks from Weaviate
+                    await self.storage.delete_chunks(file_name)
                     
-                    if result["success"]:
-                        processed += 1
-                        if self.tracker:
-                            self.tracker.mark_as_processed(file_path)
-                    else:
-                        failed += 1
-                        logger.error(f"Failed to process {file_path}: {result['message']}")
+                    # Update tracker
+                    tracker.remove_file(file_name)
+                    logger.info(f"Successfully processed deletion: {file_name}")
                 except Exception as e:
-                    failed += 1
-                    logger.error(f"Error processing file {file_path}: {str(e)}")
-                    
-            logger.info(f"Processed existing files summary: total={len(files)}, " +
-                    f"processed={processed}, skipped={skipped}, failed={failed}")
+                    logger.error(f"Error processing deletion {file_name}: {str(e)}")
         
-        # Set up watchdog for future changes
-        observer_start = time.time()
-        observer = Observer()
-        observer.schedule(self, data_folder, recursive=False)
-        observer.start()
-        
-        watch_time = time.time() - watch_start
-        logger.info(f"Now watching folder {data_folder} for changes (setup took {watch_time:.2f}s)")
-        
-        # Start regular stats logging
-        self._start_stats_logging()
-        
-        return observer
-
-    def _start_stats_logging(self):
-        """Set up a background thread to log statistics periodically."""
-        def log_stats_thread():
-            while True:
-                time.sleep(3600)  # Log stats every hour
-                self._log_stats()
-        
-        import threading
-        stats_thread = threading.Thread(target=log_stats_thread, daemon=True)
-        stats_thread.start()
-        logger.info("Started periodic statistics logging")
-
+        return stats
+    
 # ------------ Main Function ------------
 def main():
     """
     Main function to run the document processor.
+    Instead of watching for file changes, this version compares the current state
+    of the data folder with the tracking file on startup.
     """
     # Connect to Weaviate
     weaviate_url = config.WEAVIATE_URL
@@ -1700,7 +1478,7 @@ def main():
         client = loop.run_until_complete(connect_with_retry(weaviate_url))
         logger.info("Successfully connected to Weaviate")
         
-        # Create storage, processor, and file handler instances
+        # Create storage, processor, and tracking instances
         storage = DocumentStorage(client)
         loop.run_until_complete(storage.setup_schema())
         
@@ -1712,39 +1490,45 @@ def main():
             chunking_strategy=config.CHUNKING_STRATEGY
         )
         
-        handler = TextFileHandler(processor, tracker)
-        observer = handler.start_watching(data_folder, process_existing=True)
+        # Process all files in the data folder
+        logger.info(f"Starting document processing for all files in {data_folder}")
+        stats = loop.run_until_complete(processor.process_all_documents(tracker, data_folder))
         
-        # Log initial document count
+        # Log processing summary
+        logger.info(f"Document processing summary: {stats}")
+        
+        # Keep the application running for future manual invocations
+        logger.info("Processor will remain running. No file watching is active.")
+        logger.info("To process files again, restart the processor container.")
+        
+        # Get document count after processing
         doc_count = loop.run_until_complete(storage.get_document_count())
         logger.info(f"Current document count in database: {doc_count}")
         
-        # Keep the main thread running with signal handling
+        # Keep the container running without consuming resources
         try:
             import signal
             
+            # Set up signal handling for clean shutdown
             def signal_handler(sig, frame):
-                logger.info("Stopping the file watcher (signal received)")
-                observer.stop()
+                logger.info("Shutting down processor (signal received)")
                 raise KeyboardInterrupt
             
             signal.signal(signal.SIGINT, signal_handler)
             signal.signal(signal.SIGTERM, signal_handler)
             
-            while observer.is_alive():
-                observer.join(1)
+            # Sleep indefinitely until container is stopped
+            while True:
+                time.sleep(3600)  # Sleep for an hour
                 
         except KeyboardInterrupt:
-            logger.info("Process interrupted by user")
-            observer.stop()
+            logger.info("Process interrupted")
         finally:
-            observer.join()
             # Close the client connection
             client.close()
             # Close the event loop
             loop.close()
             logger.info("Processor shutdown complete")
-            
     except Exception as e:
         logger.error(f"Error in main function: {str(e)}")
         import traceback
