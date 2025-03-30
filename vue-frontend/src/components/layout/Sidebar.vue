@@ -19,6 +19,11 @@
           <span :class="['status-indicator', getStatusClass(systemStatus.mistral_api)]"></span>
           <span>LLM Service: {{ systemStatus.mistral_api }}</span>
         </div>
+        <div class="status-item">
+          <span :class="['status-indicator', loggingEnabled ? 'status-warning' : 'status-success']"></span>
+          <span>Chat Logging: {{ loggingEnabled ? 'Enabled' : 'Disabled' }}</span>
+          <span v-if="loggingEnabled" class="logging-warning" @click="showPrivacyInfo">⚠️</span>
+        </div>        
       </div>
       
       <div class="sidebar-actions">
@@ -30,6 +35,15 @@
         </button>
       </div>
     </div>
+    <div v-if="showPrivacyModal" class="privacy-modal">
+      <div class="privacy-content">
+        <h4>Chat Logging Information</h4>
+        <p>This system is currently logging chat interactions for research purposes.</p>
+        <p>All logs are anonymized and automatically deleted after 30 days.</p>
+        <p>For more information, please see the <a href="/privacy" target="_blank">Privacy Notice</a>.</p>
+        <button @click="showPrivacyModal = false">Close</button>
+      </div>
+    </div>    
   </div>
 </template>
 
@@ -47,15 +61,30 @@ const systemStatus = ref({
   mistral_api: 'unknown'
 });
 
+const loggingEnabled = ref(false);
+const showPrivacyModal = ref(false);
+
 onMounted(async () => {
   try {
     // Try to check system status but don't break if it fails
     const status = await chatStore.checkSystemStatus();
     systemStatus.value = status || systemStatus.value;
+
+    if (window.APP_CONFIG && typeof window.APP_CONFIG.enableChatLogging !== 'undefined') {     
+      // Force the value to be a boolean
+      loggingEnabled.value = window.APP_CONFIG.enableChatLogging === true || 
+                            window.APP_CONFIG.enableChatLogging === "true";
+      
+      console.log("Final loggingEnabled value:", loggingEnabled.value);
+    }
   } catch (error) {
     console.warn('Could not fetch system status:', error);
   }
 });
+
+function showPrivacyInfo() {
+  showPrivacyModal.value = true;
+}
 
 function getStatusClass(status) {
   if (status === 'connected' || status === 'configured' || status === 'running') {
@@ -164,5 +193,55 @@ function logout() {
 
 .action-button.logout:hover {
   background-color: #c53030;
+}
+
+.status-warning {
+  background-color: #f6ad55;
+}
+
+.logging-warning {
+  margin-left: 8px;
+  cursor: pointer;
+}
+
+/* Modal Styles */
+.privacy-modal {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+}
+
+.privacy-content {
+  background-color: white;
+  padding: 16px;
+  border-radius: 8px;
+  max-width: 80%;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.privacy-content h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.privacy-content button {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background-color: #4a6cf7;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.privacy-content button:hover {
+  background-color: #3a5cd7;
 }
 </style>

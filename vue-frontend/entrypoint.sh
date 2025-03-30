@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+API_URL='/api'
+
 # Read API key from file
 if [ -f "$INTERNAL_API_KEY_FILE" ]; then
   API_KEY=$(cat $INTERNAL_API_KEY_FILE)
@@ -10,11 +12,17 @@ else
   API_KEY=""
 fi
 
+# Parse ENABLE_CHAT_LOGGING to ensure it's a proper boolean value for JavaScript
+LOGGING_ENABLED="false"
+if [ "${ENABLE_CHAT_LOGGING}" = "true" ]; then
+  LOGGING_ENABLED="true"
+fi
+
 # Generate config file
 echo "window.APP_CONFIG = {
   apiUrl: '${API_URL}',
   apiKey: '${API_KEY}',
-  enableChatLogging: ${ENABLE_CHAT_LOGGING:-false}
+  enableChatLogging: ${LOGGING_ENABLED}
 };" > "/usr/share/nginx/html/config.js"
 
 # Create a custom Nginx configuration file with the API key
