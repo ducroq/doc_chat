@@ -89,12 +89,50 @@ This architecture provides excellent performance, security, and scalability whil
 
 ### Prerequisites
 
-- Linux server (Ubuntu 22.04 LTS recommended)
-- Docker and Docker Compose installed
+- Linux server, e.g. Hetzner Cloud account
+- SSH key registered with Hetzner
 - At least 4GB of RAM
 - Mistral AI API key
+- Domain name (optional, for HTTPS)
 
-### Docker Setup
+### Server setup
+
+Create a new server in Hetzner Cloud with the recommended configuration.
+
+**1. Server selection**
+
+First, you'll need to choose an appropriate Hetzner Cloud server:
+
+Recommended: CX31 (4 vCPU, 8GB RAM) or higher
+Operating System: Ubuntu 22.04 LTS
+Storage: At least 40GB SSD (your documents will be stored here)
+
+**2. Initial server setup**
+
+After creating your server, connect via SSH:
+```bash
+ssh root@your-server-ip
+```
+
+Update system
+```bash
+apt update && apt upgrade -y
+```
+
+Install Docker and Docker Compose
+```bash
+apt install -y docker.io docker-compose
+```
+
+Create a non-root user (optional but recommended)
+```bash
+useradd -m -s /bin/bash docadmin
+usermod -aG docker docadmin
+passwd docadmin
+# Set a strong password when prompted
+```
+
+<!-- **2. Docker Setup**
 
 When deploying on Linux, you may need to configure Docker permissions:
 
@@ -103,20 +141,125 @@ When deploying on Linux, you may need to configure Docker permissions:
 sudo usermod -aG docker $USER
 # Log out and log back in, or run:
 newgrp docker
-```
+``` -->
 
-### Deployment Steps
-
-1. Clone the repository:
+**3. Clone the repository**
 
 ```bash
 # If using SSH (recommended)
 git clone git@github.com:ducroq/doc-chat.git
+
 # Or using HTTPS with a personal access token
 git clone https://TOKEN@github.com/ducroq/doc-chat.git
 ```
 
-2. Use the start and stop scripts:
+**4. Create directories for persistence**
+
+```bash
+mkdir -p data chat_data secrets
+```
+
+Set ownership to match the user in the container (1000:1000)
+```bash
+chown -R 1000:1000 chat_data data secrets
+```
+
+Set appropriate permissions
+```bash
+chmod -R 755 chat_data data secrets
+```
+
+<!-- or overly permissive  -->
+<!-- chmod 777 data chat_data  # Ensure Docker can write to these directories -->
+
+**5. Adding documents**
+
+You can add documents to your system by uploading them to the data directory:
+
+For example, using SCP from your local machine:
+```bash
+scp your-document.md root@your-server-ip:/root/doc_chat/data/
+```
+
+If you need to add metadata:
+```bash
+scp your-document.metadata.json root@your-server-ip:/root/doc_chat/data/
+```
+
+The document processor should automatically detect and process these files on application startup.
+
+
+**6. Configure API keys and secrets**
+
+Create Mistral API key file
+```bash
+echo "your_mistral_api_key_here" > ./secrets/mistral_api_key.txt
+```
+
+Create internal API key
+```bash
+openssl rand -hex 32 > ./secrets/internal_api_key.txt
+```
+
+Create JWT secret for authentication
+```bash
+openssl rand -hex 32 > ./secrets/jwt_secret_key.txt
+```
+
+**7. Create environment configuration**
+
+Create a .env file with appropriate settings:
+
+```bash
+cat > .env << EOL
+# Mistral AI Configuration
+MISTRAL_MODEL=mistral-large-latest
+# mistral-small-latest, mistral-large-latest, mistral-medium, mistral-tiny (for cost control)
+MISTRAL_DAILY_TOKEN_BUDGET=100000
+MISTRAL_MAX_TOKENS_PER_REQUEST=5000
+MISTRAL_MAX_REQUESTS_PER_MINUTE=30
+
+# Weaviate Configuration
+WEAVIATE_URL=http://weaviate:8080
+
+# Document Processor Configuration
+DOCS_DIR=/data
+
+# Chat Logging Controls - All default to privacy-preserving settings
+# Set to 'true' to enable logging
+ENABLE_CHAT_LOGGING=true
+# Set to 'false' to disable anonymization (not recommended)
+ANONYMIZE_CHAT_LOGS=true
+# Number of days to keep logs before automatic deletion
+LOG_RETENTION_DAYS=30
+EOL
+```
+
+**8. Setup user authentication**
+
+Create at least one admin user:
+
+```bash
+python3 manage_users.py create admin --generate-password --admin --full-name "System Administrator" --email "your@email.com"
+```
+
+**9. Build and launch**
+
+If needed, delete old stuff:
+```bash
+docker-compose down --volumes --remove-orphans
+```
+
+```bash
+docker-compose build --no-cache
+```
+
+Enable Docker to start on boot
+```bash
+sudo systemctl enable docker
+```
+
+Use the start and stop scripts
 
 ```bash
 # Make scripts executable
@@ -129,149 +272,191 @@ chmod +x start.sh stop.sh
 ./stop.sh
 ```
 
-3. Troubleshooting common issues:
-- If Docker permission errors occur, ensure your user is in the docker group
-- If build errors mention COPY commands, ensure destination paths end with '/'
-- For networking issues, check if required ports are open and not blocked by firewalls
+**10. Domain setup**
 
-## Production Deployment (E.g. Hetzner)
+If you have a domain name, set up DNS to point to your Hetzner server's IP.
 
-### Prerequisites
+Create or Modify DNS Records by setting an A Record (for IPv4):
 
-- Domain name (optional, for HTTPS)
-- Hetzner Cloud account
-- SSH key registered with Hetzner
+- An "A" record maps a domain name (or subdomain) to an IPv4 address.   
+- Create a new "A" record (or modify an existing one).
+- Host/Name:
+   - To point your main domain (e.g., yourdomain.com) to the IP, enter @ or leave it blank.
+   - To point a subdomain (e.g., www.yourdomain.com), enter www.
+   - Value/Points to/Destination: Enter your Hetzner server's IPv4 address.
 
-### Server Sizing
+**11. Test the Deployment**
 
-Recommended server configuration:
-- CX31 (4 vCPU, 8GB RAM)
-- Ubuntu 22.04
-- 40GB SSD (minimum)
+Visit http://your-server-ip (or https://yourdomain.com if you set up SSL)
+Log in with the admin credentials you created
+Test querying your documents
 
-### Setup Steps
 
-1. **Create server**:
-   Create a new server in Hetzner Cloud with the recommended configuration.
+**12. HTTPS setup**
 
-2. **Install Docker**:
-   ```bash
-   ssh root@your-server-ip
-   apt update && apt upgrade -y
-   apt install -y docker.io docker-compose
-   ```
-
-3. **Clone repository**:
-   ```bash
-   git clone https://github.com/ducroq/doc-chat.git
-   cd doc-chat
-   ```
-
-4. **Configure environment variables**:
-   ```bash
-   nano .env
-   ```
-   Add the following content:
-   ```
-   # Core Configuration
-   WEAVIATE_URL=http://weaviate:8080
-   MISTRAL_API_KEY=your_api_key_here
-   MISTRAL_MODEL=mistral-small
-   MISTRAL_DAILY_TOKEN_BUDGET=50000
-   MISTRAL_MAX_REQUESTS_PER_MINUTE=10
-   
-   # Chat Logging Configuration (for research purposes)
-   ENABLE_CHAT_LOGGING=false        # Set to 'true' when needed for research
-   ANONYMIZE_CHAT_LOGS=true         # Keep enabled for GDPR compliance
-   LOG_RETENTION_DAYS=30            # Adjust based on your data policy
-   ```
-
-5. **Create directories for persistence**:
-   ```bash
-   mkdir -p data chat_data
-   chmod 777 data chat_data  # Ensure Docker can write to these directories
-   ```
-
-6. **Adjust docker-compose.yml** (optional):
-   For production, replace the prototype web interface with the production one:
-   ```bash
-   nano docker-compose.yml
-   ```
-   Comment out the `web-prototype` service and uncomment the `web-production` service.
-   
-   Make sure the volume mounts include chat_data:
-   ```yaml
-   api:
-     # ... other configuration ...
-     volumes:
-       - ./chat_data:/app/chat_data
-   ```
-
-7. **Start the system**:
-   ```bash
-   docker-compose up -d
-   ```
-
-8. **Set up a domain** (optional):
-   To use HTTPS, set up DNS to point to your server's IP address, then install Certbot for SSL:
-   ```bash
-   apt install -y certbot python3-certbot-nginx
-   certbot --nginx -d yourdomain.com
-   ```
-
-9. **Create a data volume** (recommended):
-   For data persistence:
-   ```bash
-   docker volume create doc_chat_data
-   ```
-   Update your docker-compose.yml to use this volume for the data directory.
-
-## Backup and Maintenance
-
-### Backup Weaviate Data
-
+Stop the application using the script
 ```bash
-# Stop the containers
-docker-compose down
-
-# Backup the Weaviate data volume
-docker run --rm -v weaviate_data:/data -v $(pwd)/backups:/backups ubuntu tar -czvf /backups/weaviate_backup_$(date +%Y%m%d).tar.gz /data
-
-# Backup chat logs if enabled
-tar -czvf backups/chat_logs_backup_$(date +%Y%m%d).tar.gz chat_data/
-
-# Restart the containers
-docker-compose up -d
+./stop.sh
 ```
 
-### Update the System
+Change the port mapping for the vue-frontend service to port 8081 instead:
+
+Find this section in docker-compose.yml:
+```bash
+vue-frontend:
+  build: 
+    context: ./vue-frontend
+    dockerfile: Dockerfile
+  ports:
+    - "80:80"
+```
+
+Configure Nginx to proxy requests to Docker, but first get the internal API key:
+```bash
+cat ./secrets/internal_api_key.txt
+```
+
+Set the right apikey in the API location section of the configuration below 
+```
+proxy_set_header X-API-Key "";
+```
+
+Now create the Nginx configuration
+```bash
+cat > /etc/nginx/sites-available/docchat << 'EOL'
+server {
+    listen 80;
+    server_name doc-chat-demo.jeroenveen.nl;
+    # Simple redirect to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name doc-chat-demo.jeroenveen.nl;
+    ssl_certificate /etc/letsencrypt/live/doc-chat-demo.jeroenveen.nl/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/doc-chat-demo.jeroenveen.nl/privkey.pem;
+    
+    # Frontend location
+    location / {
+        proxy_pass http://localhost:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        proxy_pass_request_headers on;
+    }
+    
+    # API location - THIS WAS MISSING FROM YOUR HTTPS SERVER BLOCK
+    location /api/ {
+        proxy_pass http://localhost:8000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 90;
+        # Add the API key header
+        proxy_set_header X-API-Key "";
+    }
+}
+EOL
+```
+
+Double-check that /etc/letsencrypt/live/your-domain.nl/fullchain.pem and /etc/letsencrypt/live/yor-domain.nl/privkey.pem are the correct paths to your Let's Encrypt certificate files.
+
+Enable the site
+```bash
+ln -s /etc/nginx/sites-available/dochat /etc/nginx/sites-enabled/
+```
+
+Sometimes, previous failed Nginx attempts can leave lingering processes. If you see multiple Nginx processes, try killing them all:
+```bash
+sudo killall nginx
+```
+
+Start Nginx
+```bash
+sudo systemctl start nginx
+```
+
+Or reload Nginx
+```bash
+sudo systemctl reload nginx
+```
+
+Test Nginx configuration
+```bash
+nginx -t
+```
+
+Install Certbot
+```bash
+apt install -y certbot python3-certbot-nginx
+```
+
+Configure Nginx (assuming the frontend is already running on port 80)
+```bash
+certbot --nginx -d yourdomain.com
+```
+This will automatically obtain and configure SSL certificates
+
+Start your application using the script
+```bash
+./start.sh
+```
+
+**13. Configure Firewall**
+
+Install UFW if not already installed
+```bash
+apt install -y ufw
+```
+
+Allow SSH (important to do this first so you don't lock yourself out)
+```bash
+ufw allow ssh
+```
+
+Allow HTTP/HTTPS
+```bash
+ufw allow 80/tcp
+ufw allow 443/tcp
+```
+
+Optionally allow direct access to the API (if needed)
+```bash
+ufw allow 8000/tcp
+```
+
+Enable the firewall
+```bash
+ufw enable
+```
+
+**14. Test the Deployment**
+- Visit https://yourdomain.com 
+- Log in with the admin credentials you created
+- Test querying your documents
+
+
+## Monitoring and maintenance
+
+### Update the system
 
 ```bash
 # Pull latest changes
 git pull
 
 # Rebuild and restart
-docker-compose down
-docker-compose build
-docker-compose up -d
+./stop.sh
+docker-compose build --no-cache
+./start.sh
 ```
-
-### Managing Chat Logs
-
-```bash
-# Enable chat logging (edit .env file)
-sed -i 's/ENABLE_CHAT_LOGGING=false/ENABLE_CHAT_LOGGING=true/' .env
-docker-compose restart api vue-frontend
-
-# Disable chat logging
-sed -i 's/ENABLE_CHAT_LOGGING=true/ENABLE_CHAT_LOGGING=false/' .env
-docker-compose restart api vue-frontend
-
-# Delete all chat logs (if needed for GDPR compliance)
-rm -rf chat_data/chat_log_*.jsonl
-```
-
-## Monitoring
 
 ### Viewing Logs
 
@@ -286,7 +471,7 @@ docker-compose logs -f api
 ls -la chat_data/
 ```
 
-### Health Checks
+### Health checks
 
 ```bash
 # Check API status
@@ -298,6 +483,139 @@ curl http://localhost:8000/documents/count
 # Detailed statistics
 curl http://localhost:8000/statistics
 ```
+
+### Setup monitoring scripts
+
+**1. Basic monitoring**
+```bash
+
+cat > /root/monitor.sh << 'EOL'
+#!/bin/bash
+cd /root/doc-chat
+docker-compose ps
+echo "API Status:"
+curl -s http://localhost:8000/status
+echo -e "\n\nDocument Count:"
+curl -s http://localhost:8000/documents/count
+EOL
+
+chmod +x /root/monitor.sh
+```
+
+**2. Enhanced monitoring**
+```bash
+cat > /root/enhanced-monitor.sh << 'EOL'
+#!/bin/bash
+LOG_FILE="/var/log/doc-chat-health.log"
+EMAIL="your-email@example.com"
+
+echo "========== $(date) ==========" >> $LOG_FILE
+
+# Check each container status
+echo "Container Status:" >> $LOG_FILE
+docker-compose -f /root/doc-chat/docker-compose.yml ps >> $LOG_FILE
+
+# Check API health
+API_HEALTH=$(curl -s http://localhost:8000/status)
+echo "API Health: $API_HEALTH" >> $LOG_FILE
+
+# Check document count
+DOC_COUNT=$(curl -s http://localhost:8000/documents/count)
+echo "Document Count: $DOC_COUNT" >> $LOG_FILE
+
+# Check disk space
+echo "Disk Space:" >> $LOG_FILE
+df -h / >> $LOG_FILE
+
+# Check memory usage
+echo "Memory Usage:" >> $LOG_FILE
+free -h >> $LOG_FILE
+
+# Check for containers that need to be restarted
+UNHEALTHY=$(docker ps --filter "status=exited" --filter "name=doc_chat" --format "{{.Names}}")
+if [ ! -z "$UNHEALTHY" ]; then
+  echo "Unhealthy containers found: $UNHEALTHY" >> $LOG_FILE
+  echo "Attempting to restart..." >> $LOG_FILE
+  cd /root/doc-chat && docker-compose up -d
+  
+  # Optionally send an email alert
+  # echo "Containers restarted on $(hostname): $UNHEALTHY" | mail -s "DocChat Alert" $EMAIL
+fi
+
+echo "========== End of Check ==========" >> $LOG_FILE
+EOL
+
+chmod +x /root/enhanced-monitor.sh
+```
+
+**3. Automated updates**
+
+Set up periodic Docker image updates:
+
+Create update script
+```bash
+cat > /root/update.sh << 'EOL'
+#!/bin/bash
+cd /root/doc-chat
+git pull
+docker-compose build
+docker-compose up -d
+EOL
+
+chmod +x /root/update.sh
+```
+
+Set up daily checks via cron:
+
+Edit the crontab
+```bash
+crontab -e
+```
+paste:
+```
+## Run monitoring every 6 hours
+#0 */6 * * * /root/monitor.sh > /root/system_status.log 2>&1
+
+# Run enhanced monitoring every hour
+0 * * * * /root/enhanced-monitor.sh
+
+# Run update check weekly on Sunday at 3 AM
+0 3 * * 0 /root/update.sh > /root/update.log 2>&1
+```
+
+**4. Resource monitoring**
+
+Install basic monitoring tools:
+
+```bash
+apt install -y htop iotop
+```
+
+**5. Log Rotation**
+
+Ensure Docker logs don't fill up your disk:
+
+```bash
+# Configure Docker log rotation
+cat > /etc/docker/daemon.json << 'EOL'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+EOL
+
+# Restart Docker to apply changes
+systemctl restart docker
+```
+
+
+
+
+
+
 
 ## Research and Analytics
 

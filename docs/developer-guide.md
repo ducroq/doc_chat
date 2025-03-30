@@ -105,7 +105,7 @@ This starts a development server at http://localhost:5173 with hot reloading.
 ### Document Processor (`processor.py`)
 
 The processor is responsible for:
-- Watching a folder for new/modified/deleted text files
+- Comparing the current state of the data folder with a tracking file on startup. To process new files, you must restart the processor container.
 - Chunking text into manageable segments
 - Creating vector embeddings via Weaviate
 - Tracking processed files to avoid redundant processing
@@ -114,7 +114,6 @@ Key classes:
 - `DocumentStorage`: Handles interaction with Weaviate
 - `ProcessingTracker`: Tracks processed files and their timestamps
 - `DocumentProcessor`: Processes text files into chunks
-- `TextFileHandler`: Watches folder and triggers processing
 
 ### API Service (`main.py`)
 
@@ -156,8 +155,8 @@ The chat logger provides privacy-compliant logging for research:
 
 ### Document Processing Workflow
 
-1. Admin adds `.txt` file to watched folder
-2. Processor detects file change
+1. Admin adds `.md` and `.metadata.json` files to data folder
+2. Processor detects file change during system startup
 3. Text is chunked into segments
 4. Chunks are stored in Weaviate with metadata
 5. Vector embeddings are generated automatically by Weaviate

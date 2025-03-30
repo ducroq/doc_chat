@@ -17,7 +17,7 @@ The following sequence diagram illustrates the document processing workflow:
 ```mermaid
 sequenceDiagram
     actor Admin
-    participant Folder as Watched Folder
+    participant Folder as Data Folder
     participant Processor as Document Processor
     participant Chunker as Text Chunker
     participant Weaviate as Vector Database
@@ -56,7 +56,7 @@ sequenceDiagram
 
 ### 1. File Detection
 
-The system uses the Python `watchdog` library to monitor a designated folder for changes:
+The document processing workflow now runs during system startup, rather than continuously watching for changes. Administrators need to restart the processor service after adding new files.
 
 - New files: Processed and indexed
 - Modified files: Re-processed and re-indexed
