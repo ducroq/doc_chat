@@ -74,7 +74,7 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
    ```
    
 5. Access the interfaces:
-   - Web interface: http://localhost (served by Nginx)
+   - Web interface: http://localhost:8081 (served by Nginx)
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080
 

@@ -77,7 +77,7 @@ sleep 10
 # Start the API and frontend
 echo "Starting API and Vue.js frontend..."
 docker-compose up -d api vue-frontend
-frontend_url="http://localhost:80"
+frontend_url="http://localhost:8081"
 
 # Wait for API to initialize and verify connection to Weaviate
 echo "Waiting for API to connect to Weaviate..."

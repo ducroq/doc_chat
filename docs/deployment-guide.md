@@ -76,7 +76,7 @@ This architecture provides excellent performance, security, and scalability whil
    ```
 
 5. **Access the interfaces**:
-   - Web interface: http://localhost
+   - Web interface: http://localhost:8081
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080
    - Privacy notice: http://localhost:8000/privacy

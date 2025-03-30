@@ -92,7 +92,7 @@ Start-Sleep -Seconds 10
 # Start the API and frontend
 Write-Host "Starting API and Vue.js frontend..." -ForegroundColor Yellow
 docker-compose up -d api vue-frontend
-$frontendUrl = "http://localhost:80"
+$frontendUrl = "http://localhost:8081"
 
 # Wait for API to initialize and verify connection to Weaviate
 Write-Host "Waiting for API to connect to Weaviate..." -ForegroundColor Yellow
