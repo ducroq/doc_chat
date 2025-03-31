@@ -82,7 +82,7 @@ This architecture provides excellent performance, security, and scalability whil
    - Privacy notice: http://localhost:8000/privacy
 
 6. **Add documents**:
-   Place .txt files in the `data/` directory.
+   Place .md files in the `data/` directory.
 
 
 ## Linux Server Deployment
@@ -658,7 +658,7 @@ Remember that any research using these logs must comply with GDPR and your organ
    - Check logs: `docker-compose logs weaviate`
 
 2. **Document processor not detecting files**:
-   - Ensure files are .txt format
+   - Ensure files are .md format
    - Check permissions on data directory
    - Verify processor logs: `docker-compose logs processor`
 
