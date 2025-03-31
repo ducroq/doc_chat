@@ -26,12 +26,17 @@
             placeholder="Enter password"
           />
         </div>
-        
+
         <p v-if="error" class="error-message">{{ error }}</p>
         
         <button type="submit" :disabled="loading">
           {{ loading ? 'Logging in...' : 'Login' }}
         </button>
+
+        <p class="register-link">
+          Don't have an account? <router-link to="/register">Create one</router-link>
+        </p>        
+
       </form>
     </div>
   </div>
@@ -134,6 +139,12 @@ button:hover {
 button:disabled {
   background-color: #a0aec0;
   cursor: not-allowed;
+}
+
+.register-link {
+  margin-top: 1rem;
+  text-align: center;
+  font-size: 0.9rem;
 }
 
 .error-message {

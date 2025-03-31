@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '../views/ChatView.vue'
 import LoginView from '../views/LoginView.vue'
 import authService from '../services/authService'
+import RegisterView from '../views/RegisterView.vue'
 
 const routes = [
   {
@@ -19,7 +20,12 @@ const routes = [
     path: '/privacy',
     name: 'Privacy',
     component: () => import('../views/PrivacyView.vue') // Lazy loaded
-  }
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: RegisterView
+  } 
 ]
 
 const router = createRouter({

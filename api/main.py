@@ -30,6 +30,8 @@ from dotenv import load_dotenv
 from mistralai import Mistral
 from tenacity import retry, stop_after_attempt, wait_exponential
 from chat_logger import ChatLogger
+from utils import validate_password
+
 
 # Configuration
 load_dotenv()
@@ -329,6 +331,21 @@ class TokenData(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+class RegisterUser(BaseModel):
+    username: str
+    password: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    
+    @field_validator('username')
+    @classmethod
+    def username_must_be_valid(cls, v: str) -> str:
+        if not v or not re.match(r'^[a-zA-Z0-9_-]{3,16}$', v):
+            raise ValueError("Username must be 3-16 characters and contain only letters, numbers, underscores, and hyphens")
+        return v
+    
+    # Add more validation as needed    
 
 # Error classes
 class MistralAPIError(Exception):
@@ -1605,6 +1622,51 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
             status_code=500,
             detail=f"Error flushing logs: {str(e)}"
         )
+    
+@app.post("/register")
+async def register_user(
+    user_data: RegisterUser  # Define this model
+):
+    """
+    Register a new user.
+    """
+    # Check if username already exists
+    users_db = get_users_db()
+    if user_data.username in users_db:
+        raise HTTPException(
+            status_code=400,
+            detail="Username already registered"
+        )
+    
+    # Validate password strength
+    is_valid, message = validate_password(user_data.password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail=message
+        )
+    
+    # Create the user with non-admin role
+    hashed_password = bcrypt.hashpw(user_data.password.encode(), bcrypt.gensalt()).decode()
+    
+    # Create new user entry
+    new_user = {
+        "username": user_data.username,
+        "full_name": user_data.full_name,
+        "email": user_data.email,
+        "hashed_password": hashed_password,
+        "disabled": False,
+        "is_admin": False  # Self-registered users are not admins
+    }
+    
+    # Add to users DB
+    users_db[user_data.username] = new_user
+    
+    # Save the updated user DB
+    with open('users.json', 'w') as f:
+        json.dump(users_db, f, indent=2)
+    
+    return {"message": "User registered successfully"}    
 
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
