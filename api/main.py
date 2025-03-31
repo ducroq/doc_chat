@@ -47,6 +47,8 @@ class Settings:
     MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-tiny")
     DAILY_TOKEN_BUDGET = int(os.getenv("MISTRAL_DAILY_TOKEN_BUDGET", "10000"))
     MAX_REQUESTS_PER_MINUTE = int(os.getenv("MISTRAL_MAX_REQUESTS_PER_MINUTE", "10"))
+    REGISTRATION_MAX_REQUESTS_PER_HOUR = int(os.getenv("REGISTRATION_MAX_REQUESTS_PER_HOUR", "5"))
+    REGISTRATION_MAX_REQUESTS_PER_IP = int(os.getenv("REGISTRATION_MAX_REQUESTS_PER_IP", "3"))    
     CHAT_LOG_DIR = os.getenv("CHAT_LOG_DIR", "chat_data")
     INTERNAL_API_KEY_FILE = os.getenv("INTERNAL_API_KEY_FILE", "/run/secrets/internal_api_key")
     MAX_CACHE_ENTRIES = int(os.getenv("MAX_CACHE_ENTRIES", "100"))
@@ -74,10 +76,12 @@ token_usage = {
     "reset_date": datetime.now().strftime("%Y-%m-%d")
 }
 request_timestamps = deque(maxlen=settings.MAX_REQUESTS_PER_MINUTE)
+registration_timestamps = deque(maxlen=100)  # Keep last 100 timestamps for memory efficiency
 response_cache: Dict[str, Dict[str, Any]] = {}  # Dictionary to store cached responses
 
 # Global state for rate limiting
 ip_request_counters = defaultdict(list)
+registration_ip_counters = defaultdict(list)
 
 # Initialize chat logger
 chat_logger = None
@@ -345,8 +349,15 @@ class RegisterUser(BaseModel):
             raise ValueError("Username must be 3-16 characters and contain only letters, numbers, underscores, and hyphens")
         return v
     
-    # Add more validation as needed    
-
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', v):
+            raise ValueError("Invalid email format")
+        return v
+    
 # Error classes
 class MistralAPIError(Exception):
     """
@@ -507,6 +518,17 @@ def check_rate_limit() -> bool:
     # Add current timestamp and allow request
     request_timestamps.append(now)
     return True
+
+def check_global_registration_rate():
+    """Check if global registration rate is within limits"""
+    now = time.time()
+    
+    # Remove timestamps older than 1 hour
+    while registration_timestamps and now - registration_timestamps[0] > 3600:
+        registration_timestamps.popleft()
+    
+    # Check if we've exceeded the hourly limit
+    return len(registration_timestamps) < settings.REGISTRATION_MAX_REQUESTS_PER_HOUR
 
 def check_secret_age(secret_path: str, max_age_days: int = 90) -> bool:
     """
@@ -1624,12 +1646,11 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
         )
     
 @app.post("/register")
-async def register_user(
-    user_data: RegisterUser  # Define this model
-):
-    """
-    Register a new user.
-    """
+async def register_user(user_data: RegisterUser, request: Request):
+    """Register a new user with rate limiting"""
+    client_ip = request.client.host
+    now = time.time()
+    
     # Check if username already exists
     users_db = get_users_db()
     if user_data.username in users_db:
@@ -1659,15 +1680,25 @@ async def register_user(
         "is_admin": False  # Self-registered users are not admins
     }
     
-    # Add to users DB
-    users_db[user_data.username] = new_user
+    try:
+        # Add to users DB
+        users_db[user_data.username] = new_user
+        
+        # Save the updated user DB
+        with open('users.json', 'w') as f:
+            json.dump(users_db, f, indent=2)
+        
+        # Log successful registration
+        logger.info(f"New user registered: {user_data.username}")
+        
+        return {"message": "User registered successfully"}
+    except Exception as e:
+        logger.error(f"Error registering user: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to register user due to an internal error"
+        )
     
-    # Save the updated user DB
-    with open('users.json', 'w') as f:
-        json.dump(users_db, f, indent=2)
-    
-    return {"message": "User registered successfully"}    
-
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user    
@@ -1748,7 +1779,7 @@ async def verify_internal_api_key(request: Request, call_next):
 @app.middleware("http")
 async def rate_limit_by_ip(request: Request, call_next):
     """
-    Middleware to rate limit requests by IP address.
+    Middleware to rate limit requests by IP address with stricter limits for registration.
     
     Args:
         request: The incoming request
@@ -1760,20 +1791,46 @@ async def rate_limit_by_ip(request: Request, call_next):
     Raises:
         HTTPException: If rate limit is exceeded
     """
-    # Get client IP
     client_ip = request.client.host
-    
-    # Clean old timestamps
     now = time.time()
-    ip_request_counters[client_ip] = [timestamp for timestamp in ip_request_counters[client_ip] 
-                                     if now - timestamp < 60]
+    path = request.url.path
     
-    # Check limits
-    if len(ip_request_counters[client_ip]) >= settings.MAX_REQUESTS_PER_MINUTE:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    # Apply dedicated limits for registration endpoint
+    if path == "/register":
+        # Clean old timestamps (older than 15 minutes instead of 1 hour)
+        registration_ip_counters[client_ip] = [
+            timestamp for timestamp in registration_ip_counters[client_ip] 
+            if now - timestamp < 900  # 15 minutes in seconds
+        ]
+        
+        # Only apply limits if there have been many attempts (5+ in 15 minutes)
+        if len(registration_ip_counters[client_ip]) >= 5:
+            logger.warning(f"Registration rate limit exceeded for IP: {client_ip}")
+            return JSONResponse(
+                status_code=429, 
+                content={"detail": "Too many registration attempts. Please try again in a few minutes."}
+            )
+        
+        # Add timestamp for this attempt
+        registration_ip_counters[client_ip].append(now)
     
-    # Add current timestamp
-    ip_request_counters[client_ip].append(now)
+    # Regular rate limiting for other endpoints (your existing code)
+    else:
+        # Clean old timestamps (older than 1 minute)
+        ip_request_counters[client_ip] = [
+            timestamp for timestamp in ip_request_counters[client_ip] 
+            if now - timestamp < 60
+        ]
+        
+        # Check if we've hit the limit
+        if len(ip_request_counters[client_ip]) >= settings.MAX_REQUESTS_PER_MINUTE:
+            return JSONResponse(
+                status_code=429, 
+                content={"detail": "Rate limit exceeded"}
+            )
+            
+        # Add current timestamp
+        ip_request_counters[client_ip].append(now)
     
     # Process request
     return await call_next(request)
