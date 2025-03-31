@@ -45,4 +45,19 @@ apiClient.interceptors.response.use(
   }
 );
 
+// Ensure proper error handling
+api.interceptors.response.use(
+  response => response,
+  error => {
+    // Ignore canceled request errors
+    if (axios.isCancel(error)) {
+      return Promise.reject(error);
+    }
+    
+    // Handle other errors
+    console.error('API error:', error);
+    return Promise.reject(error);
+  }
+);
+
 export default apiClient;
