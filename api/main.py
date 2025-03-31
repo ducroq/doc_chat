@@ -16,7 +16,7 @@ from collections import defaultdict
 import bcrypt
 import secrets
 
-from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request, Depends
+from fastapi import FastAPI, HTTPException, Header, BackgroundTasks, Request, Depends, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,8 @@ from dotenv import load_dotenv
 from mistralai import Mistral
 from tenacity import retry, stop_after_attempt, wait_exponential
 from chat_logger import ChatLogger
-from utils import validate_password
+from utils import validate_password, generate_math_captcha, verify_math_captcha
+
 
 
 # Configuration
@@ -1644,23 +1645,72 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
             status_code=500,
             detail=f"Error flushing logs: {str(e)}"
         )
-    
+
+@app.get("/captcha")
+async def get_captcha():
+    """Generate a math CAPTCHA"""
+    captcha = generate_math_captcha()
+    return {
+        "question": captcha["question"],
+        "hash": captcha["hash"],
+        "timestamp": captcha["timestamp"]
+    }
+
 @app.post("/register")
-async def register_user(user_data: RegisterUser, request: Request):
-    """Register a new user with rate limiting"""
+async def register_user(
+    request: Request,
+    captcha_answer: str = Form(...),
+    captcha_hash: str = Form(...),
+    captcha_timestamp: str = Form(...)
+):
+    """Register a new user with CAPTCHA validation"""
+
+    # You could use request.client.host for logging or additional validation
     client_ip = request.client.host
-    now = time.time()
+
+    # Parse the form data to get user information
+    form_data = await request.form()
     
-    # Check if username already exists
+    # Extract user data fields
+    username = form_data.get("username")
+    password = form_data.get("password")
+    full_name = form_data.get("full_name")
+    email = form_data.get("email")
+    
+    # Validate required fields
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+    
+    # Verify CAPTCHA
+    try:
+        is_valid = verify_math_captcha(
+            user_answer=captcha_answer,
+            answer_hash=captcha_hash,
+            timestamp=captcha_timestamp
+        )
+        
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail="CAPTCHA verification failed. Please try again."
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"CAPTCHA verification error: {str(e)}"
+        )
+    
+    # Continue with registration logic...
     users_db = get_users_db()
-    if user_data.username in users_db:
+    if username in users_db:
         raise HTTPException(
             status_code=400,
             detail="Username already registered"
         )
     
     # Validate password strength
-    is_valid, message = validate_password(user_data.password)
+    from utils import validate_password
+    is_valid, message = validate_password(password)
     if not is_valid:
         raise HTTPException(
             status_code=400,
@@ -1668,36 +1718,27 @@ async def register_user(user_data: RegisterUser, request: Request):
         )
     
     # Create the user with non-admin role
-    hashed_password = bcrypt.hashpw(user_data.password.encode(), bcrypt.gensalt()).decode()
+    hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     
     # Create new user entry
     new_user = {
-        "username": user_data.username,
-        "full_name": user_data.full_name,
-        "email": user_data.email,
+        "username": username,
+        "full_name": full_name,
+        "email": email,
         "hashed_password": hashed_password,
         "disabled": False,
         "is_admin": False  # Self-registered users are not admins
     }
     
-    try:
-        # Add to users DB
-        users_db[user_data.username] = new_user
-        
-        # Save the updated user DB
-        with open('users.json', 'w') as f:
-            json.dump(users_db, f, indent=2)
-        
-        # Log successful registration
-        logger.info(f"New user registered: {user_data.username}")
-        
-        return {"message": "User registered successfully"}
-    except Exception as e:
-        logger.error(f"Error registering user: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to register user due to an internal error"
-        )
+    # Add to users DB
+    users_db[username] = new_user
+    
+    # Save the updated user DB
+    with open('users.json', 'w') as f:
+        json.dump(users_db, f, indent=2)
+    
+    return {"message": "User registered successfully"}
+
     
 @app.get("/users/me/", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):

@@ -1,4 +1,7 @@
 import re
+import random
+import hashlib
+import time
 
 def validate_password(password):
     """
@@ -31,3 +34,52 @@ def validate_password(password):
     
     # If all checks pass
     return True, "Password is valid"
+
+def generate_math_captcha():
+    """Generate a simple math problem as CAPTCHA"""
+    a = random.randint(1, 10)
+    b = random.randint(1, 10)
+    operation = random.choice(['+', '-', '*'])
+    
+    if operation == '+':
+        answer = a + b
+        question = f"{a} + {b}"
+    elif operation == '-':
+        # Ensure positive result
+        if b > a:
+            a, b = b, a
+        answer = a - b
+        question = f"{a} - {b}"
+    else:  # multiplication
+        answer = a * b
+        question = f"{a} × {b}"
+    
+    # Create a hash of the answer with a time-based salt
+    timestamp = int(time.time())
+    answer_hash = hashlib.sha256(f"{answer}:{timestamp}".encode()).hexdigest()
+    
+    return {
+        "question": question,
+        "hash": answer_hash,
+        "timestamp": timestamp
+    }
+
+def verify_math_captcha(user_answer, answer_hash, timestamp):
+    """Verify the math CAPTCHA answer"""
+    # Ensure timestamp is an integer
+    try:
+        timestamp = int(timestamp)
+        current_time = int(time.time())
+        
+        # Check if CAPTCHA has expired (10 minutes)
+        if current_time - timestamp > 600:  # This is where the error was happening
+            return False
+        
+        # Convert user_answer to int and verify
+        user_answer = int(user_answer)
+        check_hash = hashlib.sha256(f"{user_answer}:{timestamp}".encode()).hexdigest()
+        return check_hash == answer_hash
+    except (ValueError, TypeError) as e:
+        # Log the error for debugging
+        print(f"CAPTCHA verification error: {e}")
+        return False

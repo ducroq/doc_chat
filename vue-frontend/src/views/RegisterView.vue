@@ -61,6 +61,18 @@
               placeholder="Your email address"
             />
           </div>
+          <div class="form-group captcha">              
+            <label>Please solve this math problem: {{ captchaQuestion }}</label>
+            <input 
+              type="number" 
+              v-model="captchaAnswer" 
+              required
+              placeholder="Enter answer"
+            />
+            <button type="button" @click="refreshCaptcha" class="refresh-captcha">
+              Refresh
+            </button>
+          </div>          
           
           <p v-if="error" class="error-message">{{ error }}</p>
           
@@ -77,7 +89,7 @@
   </template>
   
   <script setup>
-  import { ref } from 'vue';
+  import { ref, onMounted } from 'vue';
   import { useRouter } from 'vue-router';
   import api from '../services/api';
   
@@ -89,37 +101,84 @@
   const email = ref('');
   const error = ref('');
   const loading = ref(false);
+
+  const captchaQuestion = ref('');
+  const captchaAnswer = ref('');
+  const captchaHash = ref('');
+  const captchaTimestamp = ref(0);
   
+  async function fetchCaptcha() {
+    try {
+      captchaAnswer.value = ''; // Clear the previous answer
+      const response = await api.get('/captcha');
+      captchaQuestion.value = response.data.question;
+      captchaHash.value = response.data.hash;
+      captchaTimestamp.value = response.data.timestamp;
+    } catch (err) {
+      console.error('Failed to load CAPTCHA:', err);
+      captchaQuestion.value = 'Error loading math problem. Please refresh the page.';
+    }
+  }
+
+  function refreshCaptcha() {
+    captchaAnswer.value = '';
+    fetchCaptcha();
+  }
+
+  // Load CAPTCHA when the component is mounted
+  onMounted(() => {
+    fetchCaptcha();
+  });
+
   async function register() {
-    // Reset error message
-    error.value = '';
-    
-    // Validate form
     if (password.value !== confirmPassword.value) {
       error.value = 'Passwords do not match';
       return;
     }
-    
+
     loading.value = true;
     
     try {
-      // Send registration request to API
-      await api.post('/register', {
-        username: username.value,
-        password: password.value,
-        full_name: fullName.value || undefined,
-        email: email.value || undefined
+      // Create FormData object
+      const formData = new FormData();
+      formData.append('username', username.value);
+      formData.append('password', password.value);
+      if (fullName.value) formData.append('full_name', fullName.value);
+      if (email.value) formData.append('email', email.value);
+      formData.append('captcha_answer', captchaAnswer.value);
+      formData.append('captcha_hash', captchaHash.value);
+      formData.append('captcha_timestamp', captchaTimestamp.value);
+      
+      // Send as FormData
+      await api.post('/register', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
       });
       
-      // Registration successful, redirect to login
       router.push('/login?registered=true');
     } catch (err) {
       console.error('Registration error:', err);
-      if (err.response && err.response.data && err.response.data.detail) {
-        error.value = err.response.data.detail;
+    
+      if (err.response) {
+        if (err.response.status === 400 && err.response.data && 
+            err.response.data.detail && err.response.data.detail.includes('CAPTCHA')) {
+          // For CAPTCHA errors, show a friendlier message
+          error.value = 'The answer to the math problem was incorrect. Please try again.';
+        } else if (err.response.data && err.response.data.detail) {
+          // Other validation errors
+          error.value = err.response.data.detail;
+        } else {
+          // Generic error with status code
+          error.value = `Error ${err.response.status}: Please try again.`;
+        }
       } else {
-        error.value = 'Registration failed. Please try again.';
+        // Network or other errors
+        error.value = 'Registration failed. Please try again later.';
       }
+      
+      // Refresh CAPTCHA if there was an error
+      fetchCaptcha();
     } finally {
       loading.value = false;
     }
