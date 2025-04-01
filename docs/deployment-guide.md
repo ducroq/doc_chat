@@ -172,6 +172,12 @@ chmod -R 755 chat_data data secrets
 <!-- or overly permissive  -->
 <!-- chmod 777 data chat_data  # Ensure Docker can write to these directories -->
 
+Same for users database, set the appropriate permissions on the host
+```bash
+sudo chown 1000:1000 users.json
+sudo chmod 755 users.json 
+```
+
 **5. Adding documents**
 
 You can add documents to your system by uploading them to the data directory:
@@ -503,6 +509,7 @@ chmod +x /root/monitor.sh
 ```
 
 **2. Enhanced monitoring**
+
 ```bash
 cat > /root/enhanced-monitor.sh << 'EOL'
 #!/bin/bash
@@ -610,6 +617,25 @@ EOL
 # Restart Docker to apply changes
 systemctl restart docker
 ```
+
+
+**6. TODO: Setup ntfy**
+
+ntfy (pronounced notify) is a simple HTTP-based pub-sub notification service. It allows you to send notifications to your phone or desktop via scripts from any computer, and/or using a REST API.
+
+ ntfy.sh:
+
+We need a mail client to send monitoring info
+
+```bash
+apt-get install -y ssmtp mailutils
+```
+
+Quick configuration
+
+<!-- 
+# Then use the mail command as is
+echo "DocChat system on $(hostname) was updated on $(date)" | mail -s "DocChat Update" recipient@example.com -->
 
 
 
