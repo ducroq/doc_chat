@@ -69,26 +69,31 @@ services:
       - mistral_api_key
       - internal_api_key
       - jwt_secret_key
-    build: ./api
+    build: 
+      context: ./api
+      dockerfile: Dockerfile
     ports:
       - 8000:8000
     environment:
       - WEAVIATE_URL=http://weaviate:8080
-      - MISTRAL_MODEL=${MISTRAL_MODEL}
-      - MISTRAL_DAILY_TOKEN_BUDGET=${MISTRAL_DAILY_TOKEN_BUDGET}
-      - MISTRAL_MAX_REQUESTS_PER_MINUTE=${MISTRAL_MAX_REQUESTS_PER_MINUTE}
-      - MISTRAL_MAX_TOKENS_PER_REQUEST=${MISTRAL_MAX_TOKENS_PER_REQUEST}
-      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-      - ANONYMIZE_CHAT_LOGS=${ANONYMIZE_CHAT_LOGS:-true}
-      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
+      - MISTRAL_MODEL=mistral-large-latest
+      - MISTRAL_DAILY_TOKEN_BUDGET=100000
+      - MISTRAL_MAX_REQUESTS_PER_MINUTE=30
+      - MISTRAL_MAX_TOKENS_PER_REQUEST=5000
+      - ENABLE_CHAT_LOGGING=true
+      - ANONYMIZE_CHAT_LOGS=true
+      - LOG_RETENTION_DAYS=30
       - CHAT_LOG_DIR=chat_data
+      - MISTRAL_API_KEY_FILE=/run/secrets/mistral_api_key
       - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
       - JWT_SECRET_KEY_FILE=/run/secrets/jwt_secret_key
+      - LOG_DIR=/app/logs
     depends_on:
       - weaviate
       - t2v-transformers
     volumes:
       - ./chat_data:/app/chat_data
+      - ./logs:/app/logs
       - ./users.json:/app/users.json
     user: "1000:1000"  # Use non-root user
     security_opt:
@@ -103,11 +108,10 @@ services:
     networks:
       - frontend
     secrets:
-      - internal_api_key  # Add secrets access
+      - internal_api_key
     environment:
-      - API_URL=http://api:8000
-      - ENABLE_CHAT_LOGGING=${ENABLE_CHAT_LOGGING:-false}
-      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key  # Set path to API key file
+      - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
+      - ENABLE_CHAT_LOGGING=true
     depends_on:
       - api
     # user: "1000:1000"  # Use non-root user

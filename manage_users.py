@@ -3,7 +3,7 @@ import bcrypt
 import json
 import os
 import argparse
-from api.utils import validate_password
+from utils.utils import validate_password
 
 USER_DB_FILE = "users.json"
 

@@ -85,20 +85,41 @@ api_ready=false
 attempts=0
 max_attempts=20
 
+# First, get the API key from the file
+api_key_path="./secrets/internal_api_key.txt"
+if [ -f "$api_key_path" ]; then
+    api_key=$(cat "$api_key_path" | tr -d '\n\r')
+    echo "API key loaded from file"
+else
+    echo "Warning: API key file not found at $api_key_path"
+    api_key=""
+fi
+
 while [ "$api_ready" = false ] && [ $attempts -lt $max_attempts ]; do
     ((attempts++))
     echo "Checking API status... ($attempts/$max_attempts)"
     
-    if response=$(curl -s http://localhost:8000/status 2>/dev/null); then
-        if echo "$response" | grep -q '"weaviate":"connected"'; then
+    # Use curl with the API key header
+    response=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $api_key" http://localhost:8000/api/v1/status 2>/dev/null)
+    
+    if [ "$response" = "200" ]; then
+        # If we got a 200 response, check the actual content
+        content=$(curl -s -H "X-API-Key: $api_key" http://localhost:8000/api/v1/status)
+        if echo "$content" | grep -q '"api":"running"' && echo "$content" | grep -q '"weaviate":"connected"'; then
             api_ready=true
             echo "API successfully connected to Weaviate!"
         else
             echo "  API not fully connected yet, waiting..."
             sleep 3
         fi
+    elif [ "$response" = "429" ]; then
+        echo "  API rate limit exceeded. Waiting longer..."
+        sleep 10  # Wait longer for rate limit to reset
+    elif [ "$response" = "403" ]; then
+        echo "  API key authentication failed. Check your API key."
+        sleep 3
     else
-        echo "  API not ready yet, waiting..."
+        echo "  API not ready yet: Status code $response"
         sleep 3
     fi
 done

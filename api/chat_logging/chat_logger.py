@@ -1,73 +1,17 @@
 import os
+from logging import getLogger
 import json
 import uuid
-import logging
-import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union, Set, Tuple
-from pydantic import BaseModel, field_validator
+from typing import Optional, Dict, Any, List
 
-# Configure module logger
-logger = logging.getLogger(__name__)
+from models.models import LogEntry, FeedbackEntry
 
+logger = getLogger(__name__)
 
-class LogEntry(BaseModel):
-    """Data model for chat log entries with validation."""
-    timestamp: str
-    request_id: str
-    user_id: Optional[str] = None
-    query: str
-    response: Dict[str, Any]
-    metadata: Optional[Dict[str, Any]] = None
-
-    @field_validator('query')
-    @classmethod
-    def query_must_not_be_empty(cls, v: str) -> str:
-        """Validate that query is not empty."""
-        if not v or not v.strip():
-            raise ValueError("Query cannot be empty")
-        return v.strip()
-
-    @field_validator('timestamp')
-    @classmethod
-    def timestamp_must_be_iso_format(cls, v: str) -> str:
-        """Validate timestamp is in ISO format."""
-        try:
-            datetime.fromisoformat(v)
-            return v
-        except ValueError:
-            raise ValueError("Timestamp must be in ISO format")
-
-class FeedbackEntry(BaseModel):
-    """Data model for feedback log entries with validation."""
-    timestamp: str
-    request_id: str
-    original_request_id: str
-    message_id: str
-    user_id: Optional[str] = None
-    rating: str
-    feedback_text: Optional[str] = None
-    categories: Optional[List[str]] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-    @field_validator('rating')
-    @classmethod
-    def rating_must_be_valid(cls, v: str) -> str:
-        """Validate that rating is positive or negative."""
-        if v not in ["positive", "negative"]:
-            raise ValueError('Rating must be "positive" or "negative"')
-        return v
-
-    @field_validator('timestamp')
-    @classmethod
-    def timestamp_must_be_iso_format(cls, v: str) -> str:
-        """Validate timestamp is in ISO format."""
-        try:
-            datetime.fromisoformat(v)
-            return v
-        except ValueError:
-            raise ValueError("Timestamp must be in ISO format")
+# Initialize chat logger
+chat_logger = None
 
 class ChatLogger:
     """
@@ -98,6 +42,7 @@ class ChatLogger:
             buffer_size: Number of log entries to buffer before writing to disk
         """
         self.log_dir = Path(log_dir)
+
         self.enabled = os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true"
         self.anonymize = os.getenv("ANONYMIZE_CHAT_LOGS", "true").lower() == "true"
         self.retention_days = int(os.getenv("LOG_RETENTION_DAYS", str(self.DEFAULT_RETENTION_DAYS)))
@@ -630,4 +575,5 @@ class ChatLogger:
 
     async def alog_feedback(self, *args, **kwargs) -> bool:
         """Async-compatible wrapper for log_feedback."""
-        return self.log_feedback(*args, **kwargs)        
+        return self.log_feedback(*args, **kwargs)
+    

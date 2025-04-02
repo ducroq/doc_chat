@@ -12,7 +12,7 @@ const apiClient = axios.create({
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
-    'X-API-Key': config.apiKey
+    'X-API-Key': config.apiKey  // Make sure the API key is included
   }
 });
 
@@ -24,6 +24,12 @@ apiClient.interceptors.request.use(
     if (authHeader.Authorization) {
       config.headers.Authorization = authHeader.Authorization;
     }
+    
+    // Make sure the API key is always included
+    if (window.APP_CONFIG && window.APP_CONFIG.apiKey) {
+      config.headers['X-API-Key'] = window.APP_CONFIG.apiKey;
+    }
+    
     return config;
   },
   error => {
@@ -46,7 +52,7 @@ apiClient.interceptors.response.use(
 );
 
 // Ensure proper error handling
-api.interceptors.response.use(
+apiClient.interceptors.response.use(
   response => response,
   error => {
     // Ignore canceled request errors

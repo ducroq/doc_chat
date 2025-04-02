@@ -18,6 +18,9 @@ if [ "${ENABLE_CHAT_LOGGING}" = "true" ]; then
   LOGGING_ENABLED="true"
 fi
 
+# Make sure we escape any special characters in the API key for JavaScript
+ESCAPED_API_KEY=$(echo "$API_KEY" | sed 's/[\&/]/\\&/g')
+
 # Create a custom Nginx configuration file with the API key
 cat > /etc/nginx/conf.d/default.conf << EOF
 server {
@@ -38,7 +41,7 @@ server {
     
     # Proxy API requests and add API key
     location /api/ {
-        proxy_pass http://api:8000/;
+        proxy_pass http://api:8000/api/v1/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -48,7 +51,8 @@ server {
 }
 EOF
 
-CONFIG_SCRIPT="<script>window.APP_CONFIG = { apiUrl: '${API_URL}', apiKey: '${API_KEY}', enableChatLogging: ${LOGGING_ENABLED} };</script>"
+# Properly escape special characters for the JS code
+CONFIG_SCRIPT="<script>window.APP_CONFIG = { apiUrl: '${API_URL}', apiKey: '${ESCAPED_API_KEY}', enableChatLogging: ${LOGGING_ENABLED} };</script>"
 sed -i "s|</head>|${CONFIG_SCRIPT}</head>|" /usr/share/nginx/html/index.html
 
 echo "Generated custom Nginx configuration with API key"

@@ -100,16 +100,31 @@ $apiReady = $false
 $attempts = 0
 $maxAttempts = 20
 
+# First, get the API key from the file
+$apiKeyPath = "./secrets/internal_api_key.txt" 
+if (Test-Path $apiKeyPath) {
+    $apiKey = Get-Content $apiKeyPath -Raw
+    $apiKey = $apiKey.Trim()
+    Write-Host "API key loaded from file" -ForegroundColor Gray
+} else {
+    Write-Host "Warning: API key file not found at $apiKeyPath" -ForegroundColor Yellow
+    $apiKey = ""
+}
+
 while (-not $apiReady -and $attempts -lt $maxAttempts) {
     $attempts++
     Write-Host "Checking API status... ($attempts/$maxAttempts)" -ForegroundColor Gray
     
     try {
-        # Direct HTTP request to status endpoint
-        $response = Invoke-WebRequest -Uri "http://localhost:8000/status" -UseBasicParsing
+        # Use the correct endpoint and include the API key header
+        $headers = @{
+            "X-API-Key" = $apiKey
+        }
+        
+        $response = Invoke-WebRequest -Uri "http://localhost:8000/api/v1/status" -Headers $headers -UseBasicParsing
         $status = $response.Content | ConvertFrom-Json
         
-        if ($status.weaviate -eq "connected") {
+        if ($status.api -eq "running" -and $status.weaviate -eq "connected") {
             $apiReady = $true
             Write-Host "API successfully connected to Weaviate!" -ForegroundColor Green
         } else {
@@ -117,8 +132,19 @@ while (-not $apiReady -and $attempts -lt $maxAttempts) {
             Start-Sleep -Seconds 3
         }
     } catch {
-        Write-Host "  API not ready yet: $_" -ForegroundColor Gray
-        Start-Sleep -Seconds 3
+        $errorMessage = $_.Exception.Message
+        if ($errorMessage -match "429") { 
+            Write-Host "  API rate limit exceeded. Waiting longer..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 10
+        }
+        elseif ($errorMessage -match "403" -or $errorMessage -match "Invalid API key") {
+            Write-Host "  API key authentication failed. Check your API key." -ForegroundColor Red
+            Start-Sleep -Seconds 3
+        }
+        else {
+            Write-Host "  API not ready yet: $errorMessage" -ForegroundColor Gray
+            Start-Sleep -Seconds 3
+        }
     }
 }
 

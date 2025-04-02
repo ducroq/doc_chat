@@ -17,7 +17,7 @@ try {
             "Content-Type" = "application/json"
         }
         
-        $response = Invoke-RestMethod -Uri "http://localhost:8000/admin/flush-logs" -Method POST -Headers $headers
+        $response = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/admin/flush-logs" -Method POST -Headers $headers
         Write-Host "Log flush result: $($response.status) - $($response.message)" -ForegroundColor Green
     } else {
         Write-Host "API key file not found at $apiKeyPath - skipping log flush" -ForegroundColor Yellow
