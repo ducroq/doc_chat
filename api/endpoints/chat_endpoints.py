@@ -4,11 +4,9 @@ import time
 import uuid
 import json
 import hashlib
-import weaviate
-from mistralai import Mistral
 from typing import Optional
 from collections import deque
-from fastapi import FastAPI, APIRouter, BackgroundTasks, Request, Depends, Header, HTTPException
+from fastapi import APIRouter, Request, Depends, Header, HTTPException
 
 from config import settings
 from models.models import QueryWithHistory, APIResponse
@@ -88,7 +86,6 @@ def check_rate_limit() -> bool:
 async def chat(
     query: QueryWithHistory, 
     request: Request,
-    background_tasks: BackgroundTasks,
     api_key: str = Depends(get_api_key),
     user_id: Optional[str] = Header(None)
 ):

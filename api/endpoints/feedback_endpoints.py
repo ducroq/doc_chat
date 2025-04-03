@@ -17,7 +17,6 @@ logger = getLogger(__name__)
 @router.post("/feedback")
 async def submit_feedback(
     feedback: FeedbackModel,
-    background_tasks: BackgroundTasks,
     api_key: str = Depends(get_api_key),
     user_id: Optional[str] = Header(None)
 ):
@@ -40,7 +39,7 @@ async def submit_feedback(
                 "message_id": feedback.message_id
             }
             
-            # Log feedback directly (not as a background task to simplify)
+            # Log feedback directly
             success = await chat_logger.alog_feedback(
                 feedback=feedback.model_dump(),
                 request_id=request_id,
