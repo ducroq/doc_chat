@@ -49,7 +49,7 @@ For a visual representation, refer to the architecture diagrams in the `docs/dia
    ```
 
 3. **Configure environment variables**:
-   Create a `.env` file with:
+   Configure in `docker-compose.yml`. e.g.
    ```
    WEAVIATE_URL=http://weaviate:8080
    MISTRAL_MODEL=mistral-tiny

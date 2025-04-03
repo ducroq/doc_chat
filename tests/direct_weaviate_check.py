@@ -1,9 +1,4 @@
 import weaviate
-import os
-from dotenv import load_dotenv
-
-# Load environment variables (if you have a .env file)
-load_dotenv()
 
 def check_weaviate_storage():
     """Check Weaviate directly to see if documents and embeddings are stored correctly"""

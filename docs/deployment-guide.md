@@ -43,7 +43,8 @@ This architecture provides excellent performance, security, and scalability whil
    ```
 
 2. **Configure environment variables**:
-   Create a `.env` file in the root directory with:
+
+   Change in `docker-compose.yml`
    ```
    # Core Configuration
    WEAVIATE_URL=http://weaviate:8080
@@ -212,36 +213,7 @@ Create JWT secret for authentication
 openssl rand -hex 32 > ./secrets/jwt_secret_key.txt
 ```
 
-**7. Create environment configuration**
-
-Create a .env file with appropriate settings:
-
-```bash
-cat > .env << EOL
-# Mistral AI Configuration
-MISTRAL_MODEL=mistral-large-latest
-# mistral-small-latest, mistral-large-latest, mistral-medium, mistral-tiny (for cost control)
-MISTRAL_DAILY_TOKEN_BUDGET=100000
-MISTRAL_MAX_TOKENS_PER_REQUEST=5000
-MISTRAL_MAX_REQUESTS_PER_MINUTE=30
-
-# Weaviate Configuration
-WEAVIATE_URL=http://weaviate:8080
-
-# Document Processor Configuration
-DOCS_DIR=/data
-
-# Chat Logging Controls - All default to privacy-preserving settings
-# Set to 'true' to enable logging
-ENABLE_CHAT_LOGGING=true
-# Set to 'false' to disable anonymization (not recommended)
-ANONYMIZE_CHAT_LOGS=true
-# Number of days to keep logs before automatic deletion
-LOG_RETENTION_DAYS=30
-EOL
-```
-
-**8. Setup user authentication**
+**7. Setup user authentication**
 
 Create at least one admin user:
 
@@ -249,7 +221,7 @@ Create at least one admin user:
 python3 manage_users.py create admin --generate-password --admin --full-name "System Administrator" --email "your@email.com"
 ```
 
-**9. Build and launch**
+**8. Build and launch**
 
 If needed, delete old stuff:
 ```bash
@@ -278,7 +250,7 @@ chmod +x start.sh stop.sh
 ./stop.sh
 ```
 
-**10. Domain setup**
+**9. Domain setup**
 
 If you have a domain name, set up DNS to point to your Hetzner server's IP.
 
@@ -291,14 +263,14 @@ Create or Modify DNS Records by setting an A Record (for IPv4):
    - To point a subdomain (e.g., www.yourdomain.com), enter www.
    - Value/Points to/Destination: Enter your Hetzner server's IPv4 address.
 
-**11. Test the Deployment**
+**10. Test the Deployment**
 
 Visit http://your-server-ip (or https://yourdomain.com if you set up SSL)
 Log in with the admin credentials you created
 Test querying your documents
 
 
-**12. HTTPS setup**
+**11. HTTPS setup**
 
 Stop the application using the script
 ```bash
@@ -416,7 +388,7 @@ Start your application using the script
 ./start.sh
 ```
 
-**13. Configure Firewall**
+**12. Configure Firewall**
 
 Install UFW if not already installed
 ```bash
@@ -444,7 +416,7 @@ Enable the firewall
 ufw enable
 ```
 
-**14. Test the Deployment**
+**13. Test the Deployment**
 - Visit https://yourdomain.com 
 - Log in with the admin credentials you created
 - Test querying your documents
@@ -697,7 +669,6 @@ Remember that any research using these logs must comply with GDPR and your organ
    - Check if the chat_data directory exists and is writable
    - Verify environment variables are set correctly
    - Look for errors in API logs: `docker-compose logs api | grep "chat_logger"`
-   - Make sure comments in .env file are on separate lines from values
 
 ### Restarting Services
 

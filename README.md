@@ -45,22 +45,14 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
    cd doc-chat
    ```
 
-2. Create a `.env` file with your Mistral AI credentials:
-   ```
-   WEAVIATE_URL=http://weaviate:8080
-   MISTRAL_MODEL=mistral-tiny
-   MISTRAL_DAILY_TOKEN_BUDGET=10000
-   MISTRAL_MAX_REQUESTS_PER_MINUTE=10
-   ```
-
-3. Set up your Mistral AI API key securely using Docker Secrets:
+2. Set up your Mistral AI API key securely using Docker Secrets:
    ```bash
    mkdir -p ./secrets
    echo "your_api_key_here" > ./secrets/mistral_api_key.txt
    chmod 600 ./secrets/mistral_api_key.txt
    ```
 
-4. Start the system:
+3. Start the system:
 
    - On Windows
    ```bash
@@ -73,7 +65,7 @@ A GDPR-compliant Retrieval-Augmented Generation (RAG) system designed for academ
    ./start.sh
    ```
    
-5. Access the interfaces:
+4. Access the interfaces:
    - Web interface: http://localhost:8081 (served by Nginx)
    - API documentation: http://localhost:8000/docs
    - Weaviate console: http://localhost:8080

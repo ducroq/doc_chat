@@ -67,7 +67,6 @@ class Settings(BaseSettings):
     SECRET_ROTATION_WARNING_DAYS: int = 80
     
     class Config:
-        env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
     
