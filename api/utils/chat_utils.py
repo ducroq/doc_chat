@@ -3,7 +3,7 @@ import time
 import re
 from typing import List, Optional, Dict, Any
 
-from chat_logging.chat_logger import chat_logger
+from chat_logging.chat_logger import get_chat_logger
 from config import settings
 from utils.errors import MistralError, WeaviateError
 
@@ -217,16 +217,22 @@ async def log_chat_interaction(
         user_id: Optional user identifier
         metadata: Optional additional metadata
     """
+    chat_logger = get_chat_logger()
     if chat_logger and chat_logger.enabled:
         try:
             # Don't use await here since log_interaction is not async
-            chat_logger.log_interaction(
+            result = chat_logger.log_interaction(
                 query=query,
                 response=response,
                 request_id=request_id,
                 user_id=user_id,
                 metadata=metadata
             )
+            
+            # Explicitly flush after each interaction
+            if hasattr(chat_logger, "_flush_buffer"):
+                chat_logger._flush_buffer()
+                
         except Exception as e:
             logger.error(f"Error logging chat interaction: {str(e)}")
-
+            

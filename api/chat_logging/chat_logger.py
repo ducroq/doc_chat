@@ -12,8 +12,7 @@ from models.models import LogEntry, FeedbackEntry
 logger = getLogger(__name__)
 
 # Initialize chat logger
-chat_logger = None
-
+_chat_logger_instance = None
 class ChatLogger:
     """
     Privacy-compliant chat logger for research purposes.
@@ -577,3 +576,34 @@ class ChatLogger:
         """Async-compatible wrapper for log_feedback."""
         return self.log_feedback(*args, **kwargs)
     
+def get_chat_logger(force_new=False):
+    """
+    Get or create a chat logger instance using the factory pattern.
+    
+    Args:
+        force_new: Force creation of a new instance instead of reusing existing one
+        
+    Returns:
+        ChatLogger: A configured ChatLogger instance, or None if logging is disabled
+    """
+    global _chat_logger_instance
+    
+    # Check environment variables directly
+    enable_logging = os.getenv("ENABLE_CHAT_LOGGING", "false")
+    
+    # Convert to boolean with proper string handling
+    if isinstance(enable_logging, str):
+        enabled = enable_logging.lower() in ["true", "1", "yes", "t"]
+    else:
+        enabled = bool(enable_logging)
+    
+    # If logging is disabled, return None
+    if not enabled:
+        return None
+    
+    # Create a new instance if needed or forced
+    if _chat_logger_instance is None or force_new:
+        log_dir = os.getenv("CHAT_LOG_DIR", "chat_data")
+        _chat_logger_instance = ChatLogger(log_dir=log_dir)
+        
+    return _chat_logger_instance

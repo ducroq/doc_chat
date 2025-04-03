@@ -9,7 +9,7 @@ from fastapi.responses import RedirectResponse
 
 from auth.auth_service import get_api_key
 from auth.user_manager import get_users_db
-from chat_logging.chat_logger import ChatLogger
+from chat_logging.chat_logger import get_chat_logger
 
 router = APIRouter()
 logger = getLogger(__name__)
@@ -104,8 +104,8 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
         dict: Status message
     """
     try:
-        # Create a temporary chat logger instance to access the chat log files
-        chat_logger = ChatLogger()
+        # Get the logger instance from our factory
+        chat_logger = get_chat_logger()
         
         if chat_logger and chat_logger.enabled:
             # Flush regular chat logs
@@ -129,7 +129,7 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
             status_code=500,
             detail=f"Error flushing logs: {str(e)}"
         )
-        
+            
 @router.get("/captcha")
 async def get_captcha():
     """Generate a math CAPTCHA"""

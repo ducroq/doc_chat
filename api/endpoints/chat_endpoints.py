@@ -15,7 +15,7 @@ from models.models import QueryWithHistory, APIResponse
 from auth.auth_service import get_api_key 
 from utils.chat_utils import log_chat_interaction, handle_api_error, get_cached_response, set_cached_response, expand_question_references
 from utils.secret_utils import check_secret_age
-from chat_logging.chat_logger import chat_logger
+from chat_logging.chat_logger import get_chat_logger
 from connections.mistral_connection import call_mistral_with_retry
 
 router = APIRouter()
@@ -165,20 +165,20 @@ async def chat(
         # Get the collection
         collection = weaviate_client.collections.get("DocumentChunk")
         
-        # Search Weaviate for relevant chunks using v4 API
         # Create a hybrid query that includes context from recent conversation
         hybrid_query = processed_question
         if query.conversation_history and len(query.conversation_history) > 0:
-            # Get the most recent user question for context
+            # Get the most recent user questions for context
             recent_user_questions = [msg.get("content", "") 
                                     for msg in query.conversation_history[-3:] 
                                     if msg.get("role") == "user"]
             
-            if recent_user_questions:
+            # Only add previous questions that are different from the current one
+            filtered_questions = [q for q in recent_user_questions if q != processed_question]
+            if filtered_questions:
                 # Combine current question with recent context
-                # Weight current question higher (0.7) than context (0.3)
-                hybrid_query = f"{processed_question} {' '.join(recent_user_questions)}"
-                logger.info(f"[{request_id}] Using hybrid query for retrieval: {hybrid_query[:100]}...")
+                hybrid_query = f"{processed_question} {' '.join(filtered_questions)}"
+                logger.info(f"[{request_id}] Using hybrid query for retrieval: {hybrid_query[:100]}...")                
 
         # Use the hybrid query for retrieval
         search_result = collection.query.near_text(
@@ -266,42 +266,27 @@ async def chat(
                     logger.warning(f"Failed to parse metadata JSON for {obj.properties['filename']}")            
             
             sources.append(source)
-        
-        # Use Mistral client to generate response, include the conversation context if required
-        if conversation_context:
-            # Improve the system prompt to be more context-aware
-            system_prompt = """You are a helpful assistant that answers questions based on the provided document context. 
-            Reference section headings when appropriate in your responses. 
-            When answering follow-up questions, maintain consistency with your previous responses.
-            If information is not in the provided context, say so rather than making up information.
-            Start your responses directly by answering the question - do not begin with phrases like 'Based on the provided document context' or 'Based on our previous conversation'.
-            Write in a natural, conversational tone."""
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"""Context from documents:
-                 {context}
-                 Previous conversation:
-                 {conversation_context}
-                 Current question: {query.question}
-                 When answering, consider both the document context and our conversation history. 
-                 If the current question refers to something we discussed earlier, use that information in your answer."""
-                }            
-            ]
-        else:
-            system_prompt =  """You are a helpful assistant that answers questions based on the provided document context. 
-            Reference section headings when appropriate in your responses. Stick to the information in the context. 
-            If you don't know the answer, say so.
-            Start your responses directly by answering the question - do not begin with phrases like 'Based on the provided document context' or 'Based on our previous conversation'.
-            Write in a natural, conversational tone."""            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"""Context:
-                 {context}
-                 Question: {query.question}"""
-                }
-            ]
-        
+        # Use Mistral client to generate response, include the conversation context to be more context-aware
+        system_prompt = """You are a helpful assistant that answers questions based on the provided document context. 
+        Reference section headings when appropriate in your responses. 
+        When answering follow-up questions, maintain consistency with your previous responses.
+        If information is not in the provided context, say so rather than making up information.
+        Start your responses directly by answering the question - do not begin with phrases like 'Based on the provided document context' or 'Based on our previous conversation'.
+        Write in a natural, conversational tone."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"""Context from documents:
+                {context}
+                Previous conversation:
+                {conversation_context}
+                Current question: {query.question}
+                When answering, consider both the document context and our conversation history. 
+                If the current question refers to something we discussed earlier, use that information in your answer."""
+            }            
+        ]
+       
         chat_response = await call_mistral_with_retry(
             client=mistral_client,
             model=settings.MISTRAL_MODEL,
@@ -331,21 +316,24 @@ async def chat(
         result = {"answer": answer, "sources": sources}
         set_cached_response(cache_key, settings.MISTRAL_MODEL, result)
 
-        # Log the interaction in the background, using background_tasks to avoid delaying the response
+        chat_logger = get_chat_logger()
         if chat_logger and chat_logger.enabled:
             metadata = {
                 "timestamp": datetime.now().isoformat(),
                 "request_id": request_id
             }
             
-            background_tasks.add_task(
-                log_chat_interaction,
-                query=query.question,
-                response=result,
-                request_id=request_id,
-                user_id=user_id,
-                metadata=metadata
-            )
+            try:
+                logger.info(f"[{request_id}] Logging chat interaction directly")
+                await log_chat_interaction(
+                    query=query.question,
+                    response=result,
+                    request_id=request_id,
+                    user_id=user_id,
+                    metadata=metadata
+                )
+            except Exception as e:
+                logger.error(f"[{request_id}] Error in chat logging: {str(e)}")
             
         return APIResponse(**result)
             
