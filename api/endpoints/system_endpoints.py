@@ -5,6 +5,7 @@ import hashlib
 import json
 import bcrypt
 from fastapi import HTTPException, APIRouter, Depends, Request, Form
+from fastapi.responses import RedirectResponse
 
 from auth.auth_service import get_api_key
 from auth.user_manager import get_users_db
@@ -66,6 +67,11 @@ def verify_math_captcha(user_answer, answer_hash, timestamp):
 async def root():
     """Root endpoint to check if the API is running."""
     return {"message": "EU-Compliant RAG API is running"}
+
+@router.get("/privacy")
+async def privacy_redirect():
+    """Redirect to the frontend privacy page"""
+    return RedirectResponse(url="/privacy")
 
 @router.get("/status")
 async def status(request: Request):

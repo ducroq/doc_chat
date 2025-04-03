@@ -13,7 +13,6 @@ from endpoints import (
     search_endpoints,
     chat_endpoints,
     authentication_endpoints,
-    privacy_endpoints,
     feedback_endpoints,
     system_endpoints,
 )
@@ -121,7 +120,6 @@ app = FastAPI(
 app.include_router(search_endpoints.router, prefix=v1_prefix)
 app.include_router(chat_endpoints.router, prefix=v1_prefix)
 app.include_router(authentication_endpoints.router, prefix=v1_prefix)
-app.include_router(privacy_endpoints.router, prefix=v1_prefix)
 app.include_router(feedback_endpoints.router, prefix=v1_prefix)
 app.include_router(system_endpoints.router, prefix=v1_prefix)
 
