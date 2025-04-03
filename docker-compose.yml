@@ -83,11 +83,12 @@ services:
       - ENABLE_CHAT_LOGGING=true
       - ANONYMIZE_CHAT_LOGS=true
       - LOG_RETENTION_DAYS=30
-      - CHAT_LOG_DIR=chat_data
       - MISTRAL_API_KEY_FILE=/run/secrets/mistral_api_key
       - INTERNAL_API_KEY_FILE=/run/secrets/internal_api_key
       - JWT_SECRET_KEY_FILE=/run/secrets/jwt_secret_key
       - LOG_DIR=/app/logs
+      - CHAT_LOG_BUFFER_SIZE=1
+      - CHAT_LOG_DIR=/app/chat_data
     depends_on:
       - weaviate
       - t2v-transformers

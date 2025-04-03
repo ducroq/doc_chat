@@ -56,10 +56,12 @@ class Settings(BaseSettings):
     MAX_QUERY_LENGTH: int = 1000
     MIN_QUERY_LENGTH: int = 3
     
-    # Logging
+    # Chat logging settings
     ENABLE_CHAT_LOGGING: bool = True
     ANONYMIZE_CHAT_LOGS: bool = True
     LOG_RETENTION_DAYS: int = 30
+    CHAT_LOG_BUFFER_SIZE: int = 2
+    ANONYMIZE_PREFIX: str = "anon_"    
     
     # Meta settings
     SECRET_ROTATION_WARNING_DAYS: int = 80

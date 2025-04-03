@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+from config import settings
 from models.models import LogEntry, FeedbackEntry
 
 logger = getLogger(__name__)
@@ -23,33 +24,32 @@ class ChatLogger:
     retention periods and privacy controls.
     """
     
-    # Class constants
-    DEFAULT_LOG_DIR = "chat_data"
-    DEFAULT_RETENTION_DAYS = 30
-    DEFAULT_BUFFER_SIZE = 10
-    ANONYMIZE_PREFIX = "anon_"
-    
     def __init__(
         self, 
-        log_dir: str = DEFAULT_LOG_DIR,
-        buffer_size: int = DEFAULT_BUFFER_SIZE
+        log_dir: str = settings.CHAT_LOG_DIR,
+        buffer_size: int = settings.CHAT_LOG_BUFFER_SIZE
     ):
         """
         Initialize the chat logger with privacy controls.
-        
-        Args:
-            log_dir: Directory where logs will be stored
-            buffer_size: Number of log entries to buffer before writing to disk
         """
         self.log_dir = Path(log_dir)
-
-        self.enabled = os.getenv("ENABLE_CHAT_LOGGING", "false").lower() == "true"
+        
+        # Check environment variables for settings
+        enable_logging = os.getenv("ENABLE_CHAT_LOGGING", "false")
+        logger.info(f"ENABLE_CHAT_LOGGING environment variable: '{enable_logging}'")
+        
+        # Convert to boolean with proper string handling
+        if isinstance(enable_logging, str):
+            self.enabled = enable_logging.lower() in ["true", "1", "yes", "t"]
+        else:
+            self.enabled = bool(enable_logging)
+            
         self.anonymize = os.getenv("ANONYMIZE_CHAT_LOGS", "true").lower() == "true"
-        self.retention_days = int(os.getenv("LOG_RETENTION_DAYS", str(self.DEFAULT_RETENTION_DAYS)))
+        self.retention_days = int(os.getenv("LOG_RETENTION_DAYS", str(settings.LOG_RETENTION_DAYS)))
         self.buffer_size = buffer_size
         self.log_buffer: List[str] = []
         self.feedback_buffer: List[str] = []
-        
+
         if self.enabled:
             try:
                 self.log_dir.mkdir(exist_ok=True, parents=True)

@@ -1,4 +1,3 @@
-import asyncio
 from contextlib import asynccontextmanager
 from pydantic import ValidationError
 from fastapi import FastAPI
@@ -10,8 +9,6 @@ from utils.logging_config import setup_logging, RequestLoggingMiddleware
 from utils.secret_utils import check_secret_age
 from connections.weaviate_connection import create_weaviate_client
 from connections.mistral_connection import create_mistral_client
-from chat_logging.chat_logger import ChatLogger
-import chat_logging.chat_logger as chat_logger_module
 from endpoints import (
     search_endpoints,
     chat_endpoints,
@@ -36,14 +33,6 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown events"""
     # Startup validation
     logger.info("Performing startup validation...")
-
-    # Initialize the chat logger
-    global chat_logger
-    log_dir = settings.CHAT_LOG_DIR
-    chat_logger = ChatLogger(log_dir=log_dir)
-    # Make sure it's available in the module
-    chat_logger_module.chat_logger = chat_logger    
-    logger.info(f"Chat logger initialized in {log_dir}")
 
     # Initialize Weaviate client
     weaviate_client = create_weaviate_client()
@@ -101,28 +90,14 @@ async def lifespan(app: FastAPI):
     # Shutdown logic
     logger.info("Shutting down application...")
 
-    # Flush any pending logs
-    if chat_logger and chat_logger.enabled and hasattr(chat_logger, "_flush_buffer"):
-        try:
-            chat_logger._flush_buffer()
-        except Exception as e:
-            logger.error(f"Error flushing log buffer: {str(e)}")
-
-    # Properly close the chat logger
-    if chat_logger:
-        try:
-            # Check if the close method is a coroutine (async) or not
-            if hasattr(chat_logger, "close"):
-                if asyncio.iscoroutinefunction(chat_logger.close):
-                    await chat_logger.close()
-                else:
-                    chat_logger.close()
-            elif hasattr(chat_logger, "aclose"):  # Try alternative name
-                await chat_logger.aclose()
-        except Exception as e:
-            logger.error(f"Error closing chat logger: {str(e)}")
-
-    # Shutdown logic (if needed)
+    # Flush logs using the same function as the endpoint
+    try:
+        flush_result = await system_endpoints.flush_logs(None)  # Pass None for the API key
+        logger.info(f"Log flush result: {flush_result}")
+    except Exception as e:
+        logger.error(f"Error flushing logs during shutdown: {str(e)}")
+    
+    # Shutdown logic
     if weaviate_client:
         try:
             weaviate_client.close()

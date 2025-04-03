@@ -8,7 +8,7 @@ from fastapi import HTTPException, APIRouter, Depends, Request, Form
 
 from auth.auth_service import get_api_key
 from auth.user_manager import get_users_db
-from chat_logging.chat_logger import chat_logger
+from chat_logging.chat_logger import ChatLogger
 
 router = APIRouter()
 logger = getLogger(__name__)
@@ -98,6 +98,9 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
         dict: Status message
     """
     try:
+        # Create a temporary chat logger instance to access the chat log files
+        chat_logger = ChatLogger()
+        
         if chat_logger and chat_logger.enabled:
             # Flush regular chat logs
             if hasattr(chat_logger, "_flush_buffer"):
@@ -106,6 +109,10 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
             # Flush feedback logs if that method exists
             if hasattr(chat_logger, "_flush_feedback_buffer"):
                 chat_logger._flush_feedback_buffer()
+                
+            # Properly close the logger
+            if hasattr(chat_logger, "close"):
+                chat_logger.close()
                 
             return {"status": "success", "message": "All log buffers flushed to disk"}
         else:
@@ -116,7 +123,7 @@ async def flush_logs(api_key: str = Depends(get_api_key)):
             status_code=500,
             detail=f"Error flushing logs: {str(e)}"
         )
-    
+        
 @router.get("/captcha")
 async def get_captcha():
     """Generate a math CAPTCHA"""
