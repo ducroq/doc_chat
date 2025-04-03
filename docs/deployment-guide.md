@@ -162,12 +162,12 @@ mkdir -p data chat_data secrets
 
 Set ownership to match the user in the container (1000:1000)
 ```bash
-chown -R 1000:1000 chat_data data secrets
+chown -R 1000:1000 data chat_data logs secrets
 ```
 
 Set appropriate permissions
 ```bash
-chmod -R 755 chat_data data secrets
+chmod -R 755 data chat_data logs secrets
 ```
 
 <!-- or overly permissive  -->
@@ -286,7 +286,7 @@ vue-frontend:
     context: ./vue-frontend
     dockerfile: Dockerfile
   ports:
-    - "80:80"
+    - "8081:80"
 ```
 
 Configure Nginx to proxy requests to Docker, but first get the internal API key:
@@ -331,7 +331,7 @@ server {
     
     # API location - THIS WAS MISSING FROM YOUR HTTPS SERVER BLOCK
     location /api/ {
-        proxy_pass http://localhost:8000/;
+        proxy_pass http://localhost:8000/api/v1/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
