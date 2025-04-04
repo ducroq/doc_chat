@@ -1,4 +1,4 @@
-watchdog==6.0.0
 weaviate-client==4.11.1
 python-dotenv==1.0.1
-uuid==1.30
+pydantic==2.10.6
+pydantic-settings==2.8.1

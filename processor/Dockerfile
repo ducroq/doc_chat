@@ -5,6 +5,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY processor.py .
+# Copy the entire codebase
+COPY . .
 
-CMD ["python", "processor.py"]
+# Create necessary directories with proper permissions
+RUN mkdir -p logs && \
+    chown -R 777 logs
+
+# Run the application
+CMD ["python", "main.py"]

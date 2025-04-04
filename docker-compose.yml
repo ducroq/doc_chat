@@ -48,16 +48,22 @@ services:
     networks:
       - backend
     build: ./processor
-    volumes:
-      - ./data:/data
     environment:
       - WEAVIATE_URL=http://weaviate:8080
       - DATA_FOLDER=/data
+      - CHUNK_SIZE=1000
+      - CHUNK_OVERLAP=200
+      - CHUNKING_STRATEGY=section
+      - PROCESS_SUBFOLDERS=true
+      - LOG_DIR=/app/logs      
     depends_on:
       - weaviate
       - t2v-transformers
     restart: on-failure
     user: "1000:1000"  # Use non-root user
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs    
     security_opt:
       - no-new-privileges:true
 
