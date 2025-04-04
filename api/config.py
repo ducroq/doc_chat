@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     API_TITLE: str = "EU-Compliant RAG API"
     API_DESCRIPTION: str = "An EU-compliant RAG implementation using Weaviate and Mistral AI"
     API_VERSION: str = "1.0.0"
-    DEBUG: bool = False
+    DEBUG: bool = True
     
     # Directories and paths
     CHAT_LOG_DIR: str = "chat_data"

@@ -12,7 +12,8 @@ from weaviate.classes.query import MetadataQuery
 from config import settings
 from models.models import QueryWithHistory, APIResponse
 from auth.auth_service import get_api_key 
-from utils.chat_utils import log_chat_interaction, handle_api_error, get_cached_response, set_cached_response, expand_question_references
+from utils.chat_utils import log_chat_interaction, handle_api_error, get_cached_response, set_cached_response, \
+    expand_question_references, create_optimized_history, is_topic_related_to_history, filter_results_by_relevance, format_context_for_llm
 from utils.secret_utils import check_secret_age
 from chat_logging.chat_logger import get_chat_logger
 from connections.mistral_connection import call_mistral_with_retry
@@ -105,6 +106,8 @@ async def chat(
     Raises:
         HTTPException: If the chat process fails
     """
+    request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
+
     weaviate_client = request.app.state.weaviate_client
     if not weaviate_client:
         logger.error(f"[{request_id}] Weaviate connection not available")
@@ -113,9 +116,7 @@ async def chat(
     mistral_client = request.app.state.mistral_client
     if not mistral_client:
         logger.error(f"[{request_id}] Mistral API client not configured")
-        raise HTTPException(status_code=503, detail="Mistral API client not configured")   
-        
-    request_id = str(uuid.uuid4())[:8]  # Generate a short request ID for tracing
+        raise HTTPException(status_code=503, detail="Mistral API client not configured")        
     
     logger.info(f"[{request_id}] Chat request received: {query.question[:50] + '...' if len(query.question) > 50 else query.question}")
     logger.info(f"[{request_id}] Conversation history provided: {len(query.conversation_history) if query.conversation_history else 0} messages")
@@ -129,153 +130,65 @@ async def chat(
         )    
     
     try:
-        # Process current question with conversation context
-        processed_question = query.question
-        conversation_context = ""
+        # Step 1: Process the current question with conversation context if needed
+        processed_question = expand_question_references(
+            query.question, 
+            query.conversation_history if query.conversation_history else []
+        )
+        logger.info(f"[{request_id}] Processed question: {processed_question}")
         
-        # Process conversation history if provided
-        if query.conversation_history and len(query.conversation_history) > 0:
-            # Build conversation context (last 3 interactions)
-            recent_history = query.conversation_history[-3:] if len(query.conversation_history) > 3 else query.conversation_history
-            conversation_context = "Previous conversation:\n"
-            
-            for msg in recent_history:
-                role = msg.get("role", "unknown")
-                content = msg.get("content", "")
-                conversation_context += f"{role.capitalize()}: {content}\n\n"
-
-            # Attempt to expand references in the current question
-            processed_question = expand_question_references(query.question, recent_history)
-
-            # TODO: test optimized conversation history
-            # # Alternatively, create optimized conversation history instead of using all history
-            # conversation_context = create_optimized_history(
-            #     query.conversation_history,
-            # these numbers could be env parameters
-            #     max_exchanges=3,  # Last 3 exchanges (6 messages)
-            #     max_tokens=800    # Rough budget for conversation context
-            # )
-            # # Attempt to expand references in the current question
-            # processed_question = expand_question_references(query.question, query.conversation_history)
-
-            logger.info(f"[{request_id}] Processed question: {processed_question}")            
-
-        # Get the collection
-        collection = weaviate_client.collections.get("DocumentChunk")
-        
-        # Create a hybrid query that includes context from recent conversation
+        # Step 2: Determine search strategy - use hybrid query only for related questions
+        should_use_history = False
         hybrid_query = processed_question
+        
         if query.conversation_history and len(query.conversation_history) > 0:
-            # Get the most recent user questions for context
-            recent_user_questions = [msg.get("content", "") 
-                                    for msg in query.conversation_history[-3:] 
-                                    if msg.get("role") == "user"]
+            should_use_history = is_topic_related_to_history(processed_question, query.conversation_history)
             
-            # Only add previous questions that are different from the current one
-            filtered_questions = [q for q in recent_user_questions if q != processed_question]
-            if filtered_questions:
-                # Combine current question with recent context
-                hybrid_query = f"{processed_question} {' '.join(filtered_questions)}"
-                logger.info(f"[{request_id}] Using hybrid query for retrieval: {hybrid_query[:100]}...")                
-
-        # Use the hybrid query for retrieval
+            if should_use_history:
+                # Get recent user questions for context
+                recent_user_questions = [
+                    msg.get("content", "") 
+                    for msg in query.conversation_history[-3:] 
+                    if msg.get("role") == "user" and msg.get("content") != processed_question
+                ]
+                
+                if recent_user_questions:
+                    # Combine current question with recent context
+                    hybrid_query = f"{processed_question} {' '.join(recent_user_questions)}"
+                    logger.info(f"[{request_id}] Using hybrid query for retrieval: {hybrid_query[:100]}...")
+            else:
+                logger.info(f"[{request_id}] New topic detected, using only current question for retrieval")
+        
+        # Step 3: Get the collection and perform search
+        collection = weaviate_client.collections.get("DocumentChunk")
         search_result = collection.query.near_text(
             query=hybrid_query,
             limit=3,
             return_properties=["content", "filename", "chunkId", "metadataJson"],
             return_metadata=MetadataQuery(certainty=True, distance=True)
         )
-
-        # Filter and rank results by relevance
-        filtered_search_result = []
-
-        for o in search_result.objects:
-            if o.metadata:
-                certainty = o.metadata.certainty if hasattr(o.metadata, 'certainty') else 0                
-                if certainty > 0.6:  # Adjust this threshold as needed
-                    filtered_search_result.append(o)
-                    logger.info(f"[{request_id}] Added object with certainty: {certainty:.4f}")
-
-        # # Fallback: If no results meet the threshold but we have results, take the top N most relevant
-        # if len(filtered_search_result) == 0 and len(search_result.objects) > 0:
-        #     sorted_objects = sorted(search_result.objects, 
-        #                         key=lambda x: getattr(x.metadata, 'certainty', 0) if x.metadata else 0, 
-        #                         reverse=True)
             
-        #     # Take top result as fallback
-        #     filtered_search_result = sorted_objects[:1]
-        #     logger.info(f"[{request_id}] Using fallback with top {len(filtered_search_result)} results")
- 
-        # Check if we got any results
+        # Step 4: Filter results by relevance
+        filtered_search_result = filter_results_by_relevance(search_result, request_id, min_certainty=0.7)
+        
+        # Step 5: Check if we got any useful results
         if len(filtered_search_result) == 0:
             return APIResponse(
                 answer="I couldn't find any relevant information to answer your question.",
                 sources=[]
             )
         
-        # Or check for minimum context quality
-        total_context_length = sum(len(obj.properties['content']) for obj in filtered_search_result)
-        if total_context_length < 100:  # Adjust minimum as needed
-            return APIResponse(
-                answer="I found some information, but it doesn't seem sufficient to properly answer your question.",
-                sources=[]
-            )        
-        
-        # Log search results
-        logger.info(f"[{request_id}] Retrieved {len(filtered_search_result)} relevant chunks")
+        # Step 6: Format context from chunks for LLM prompt
+        context = format_context_for_llm(filtered_search_result, request_id)
 
-        # Format context from chunks to highlight structure
-        context_sections = []
-        for obj in filtered_search_result:
-            metadata = json.loads(obj.properties.get("metadataJson", "{}"))
-            heading = metadata.get("heading", "Untitled Section")
-            page = metadata.get("page", "")
-            page_info = f" (Page {page})" if page else ""
-            
-            section_text = f"## {heading}{page_info}\n\n{obj.properties['content']}"
-            context_sections.append(section_text)
-
-        context = "\n\n".join(context_sections)
-        
-        logger.info(f"[{request_id}] Context size: {len(context)} characters")
-
-        # Create a hash of the query and context to use as cache key
-        query_text = query.question.strip().lower()
-        context_hash = hashlib.md5(context.encode()).hexdigest()
-        cache_key = f"{query_text}_{context_hash}"
-        
-        # Check cache first
-        cached_result = get_cached_response(cache_key, settings.MISTRAL_MODEL)
-        if cached_result:
-            logger.info(f"[{request_id}] Cache hit! Returning cached response")
-            return APIResponse(**cached_result)
-
-        # Estimate tokens (very roughly - ~4 chars per token)
-        estimated_prompt_tokens = (len(query.question) + len(context)) // 4
-        estimated_response_tokens = 500  # Conservative estimate
-        total_estimated_tokens = estimated_prompt_tokens + estimated_response_tokens
-        
-        # Check if we have budget
-        if not check_token_budget(total_estimated_tokens):
-            return APIResponse(
-                answer="I'm sorry, the daily query limit has been reached to control costs. Please try again tomorrow.",
-                sources=[],
-                error="budget_exceeded"
-            )
-        
-        # Log generation attempt
-        logger.info(f"[{request_id}] Sending request to Mistral API using model: {settings.MISTRAL_MODEL}")
-        
-        start_time = time.time()        
-
-        # Format sources for citation
+        # Step 7: Format sources for citation
         sources = []
         for obj in filtered_search_result:
             source = {
                 "filename": obj.properties["filename"], 
                 "chunkId": obj.properties["chunkId"]
             }
-            
+        
             # Parse metadata JSON if it exists
             if "metadataJson" in obj.properties and obj.properties["metadataJson"]:
                 try:
@@ -293,8 +206,42 @@ async def chat(
                     logger.warning(f"Failed to parse metadata JSON for {obj.properties['filename']}")            
             
             sources.append(source)
+        
+        # Step 8: Prepare complete conversation context for prompt
+        conversation_history_text = ""
+        if query.conversation_history and len(query.conversation_history) > 0:
+            conversation_history_text = create_optimized_history(
+                query.conversation_history,
+                max_exchanges=3,
+                max_tokens=800
+            )
 
-        # Use Mistral client to generate response, include the conversation context to be more context-aware
+        # Step 9: Create cache key and check cache
+        query_text = query.question.strip().lower()
+        context_hash = hashlib.md5(context.encode()).hexdigest()
+        cache_key = f"{query_text}_{context_hash}"
+
+        # Check cache first
+        cached_result = get_cached_response(cache_key, settings.MISTRAL_MODEL)
+        if cached_result:
+            logger.info(f"[{request_id}] Cache hit! Returning cached response")
+            return APIResponse(**cached_result)
+
+        # Estimate tokens (very roughly - ~4 chars per token)
+        estimated_prompt_tokens = (len(query.question) + len(context)) // 4
+        estimated_response_tokens = 500  # Conservative estimate
+        total_estimated_tokens = estimated_prompt_tokens + estimated_response_tokens
+
+        # Check if we have budget
+        if not check_token_budget(total_estimated_tokens):
+            return APIResponse(
+                answer="I'm sorry, the daily query limit has been reached to control costs. Please try again tomorrow.",
+                sources=[],
+                error="budget_exceeded"
+            )
+        
+        # Step 10: Use Mistral client to generate response, include the conversation context to be more context-aware
+        start_time = time.time()
         system_prompt = """You are a helpful assistant that answers questions based on the provided document context. 
         Reference section headings when appropriate in your responses. 
         When answering follow-up questions, maintain consistency with your previous responses.
@@ -307,12 +254,17 @@ async def chat(
             {"role": "user", "content": f"""Context from documents:
                 {context}
                 Previous conversation:
-                {conversation_context}
+                {conversation_history_text}
                 Current question: {query.question}
                 When answering, consider both the document context and our conversation history. 
                 If the current question refers to something we discussed earlier, use that information in your answer."""
             }            
         ]
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"[{request_id}] Sending messages to Mistral: {messages}")
+        else:
+            logger.info(f"[{request_id}] Sending request to Mistral API")
        
         chat_response = await call_mistral_with_retry(
             client=mistral_client,
