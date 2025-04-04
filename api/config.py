@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Directories and paths
-    DOCS_DIR: str = "data"
-    LOG_DIR: str = "logs"
     CHAT_LOG_DIR: str = "chat_data"
     
     # Security settings
@@ -65,6 +63,10 @@ class Settings(BaseSettings):
     
     # Meta settings
     SECRET_ROTATION_WARNING_DAYS: int = 80
+    
+    # Logging
+    LOG_DIR: str = "logs"
+    LOG_FORMAT: str = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"        
     
     class Config:
         env_file_encoding = "utf-8"
