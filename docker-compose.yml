@@ -49,6 +49,7 @@ services:
       - backend
     build: ./processor
     environment:
+      - TZ=Europe/Amsterdam
       - WEAVIATE_URL=http://weaviate:8080
       - DATA_FOLDER=/data
       - CHUNK_SIZE=1000
@@ -81,6 +82,7 @@ services:
     ports:
       - 8000:8000
     environment:
+      - TZ=Europe/Amsterdam
       - WEAVIATE_URL=http://weaviate:8080
       - MISTRAL_MODEL=mistral-large-latest
       - MISTRAL_DAILY_TOKEN_BUDGET=100000
