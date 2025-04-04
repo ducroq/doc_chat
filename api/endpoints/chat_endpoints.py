@@ -7,6 +7,7 @@ import hashlib
 from typing import Optional
 from collections import deque
 from fastapi import APIRouter, Request, Depends, Header, HTTPException
+from weaviate.classes.query import MetadataQuery
 
 from config import settings
 from models.models import QueryWithHistory, APIResponse
@@ -181,22 +182,51 @@ async def chat(
         search_result = collection.query.near_text(
             query=hybrid_query,
             limit=3,
-            return_properties=["content", "filename", "chunkId", "metadataJson"]
+            return_properties=["content", "filename", "chunkId", "metadataJson"],
+            return_metadata=MetadataQuery(certainty=True, distance=True)
         )
 
+        # Filter and rank results by relevance
+        filtered_search_result = []
+
+        for o in search_result.objects:
+            if o.metadata:
+                certainty = o.metadata.certainty if hasattr(o.metadata, 'certainty') else 0                
+                if certainty > 0.6:  # Adjust this threshold as needed
+                    filtered_search_result.append(o)
+                    logger.info(f"[{request_id}] Added object with certainty: {certainty:.4f}")
+
+        # # Fallback: If no results meet the threshold but we have results, take the top N most relevant
+        # if len(filtered_search_result) == 0 and len(search_result.objects) > 0:
+        #     sorted_objects = sorted(search_result.objects, 
+        #                         key=lambda x: getattr(x.metadata, 'certainty', 0) if x.metadata else 0, 
+        #                         reverse=True)
+            
+        #     # Take top result as fallback
+        #     filtered_search_result = sorted_objects[:1]
+        #     logger.info(f"[{request_id}] Using fallback with top {len(filtered_search_result)} results")
+ 
         # Check if we got any results
-        if len(search_result.objects) == 0:
+        if len(filtered_search_result) == 0:
             return APIResponse(
                 answer="I couldn't find any relevant information to answer your question.",
+                sources=[]
+            )
+        
+        # Or check for minimum context quality
+        total_context_length = sum(len(obj.properties['content']) for obj in filtered_search_result)
+        if total_context_length < 100:  # Adjust minimum as needed
+            return APIResponse(
+                answer="I found some information, but it doesn't seem sufficient to properly answer your question.",
                 sources=[]
             )        
         
         # Log search results
-        logger.info(f"[{request_id}] Retrieved {len(search_result.objects)} relevant chunks")
+        logger.info(f"[{request_id}] Retrieved {len(filtered_search_result)} relevant chunks")
 
         # Format context from chunks to highlight structure
         context_sections = []
-        for obj in search_result.objects:
+        for obj in filtered_search_result:
             metadata = json.loads(obj.properties.get("metadataJson", "{}"))
             heading = metadata.get("heading", "Untitled Section")
             page = metadata.get("page", "")
@@ -240,7 +270,7 @@ async def chat(
 
         # Format sources for citation
         sources = []
-        for obj in search_result.objects:
+        for obj in filtered_search_result:
             source = {
                 "filename": obj.properties["filename"], 
                 "chunkId": obj.properties["chunkId"]
